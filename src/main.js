@@ -15,7 +15,7 @@ import { Interaction } from "./player/interaction.js";
 import { HUD } from "./ui/hud.js";
 import { NPCManager } from "./world/npc.js";
 import { CITY_PLAN } from "./world/cityPlan.js";
-import { PetalField, SmokeField, LanternSway, MistLayers, SkyLanterns } from "./core/particles.js";
+import { PetalField, SmokeField, LanternSway, MistLayers, SkyLanterns, WaterMotes } from "./core/particles.js";
 import { COLLISION_TEST_SOURCE } from "../tests/collision.test.mjs";
 import { ISLAND_ACCESS_TEST_SOURCE } from "../tests/island-access.test.mjs";
 import { BLOCKS } from "./world/blocks.js";
@@ -177,6 +177,8 @@ async function boot() {
   const mist = new MistLayers(renderer.scene, [38, 46, 56, 70]);
   // 孔明灯：夜间升空的暖色光点
   const skyLanterns = new SkyLanterns(renderer.scene, 120, { baseY: 36, rise: 74, range: 130 });
+  // 水中悬浮微粒（海洋雪）：仅潜水时可见
+  const waterMotes = new WaterMotes(renderer.scene, 700, 13);
 
   // 虚空重生反馈：淡出 → 重生 → 淡入 + 提示
   const voidFade = document.getElementById("voidfade");
@@ -379,6 +381,8 @@ async function boot() {
     lanternSway.update(elapsed);
     mist.update(elapsed, renderer.camera, st.night);
     skyLanterns.update(elapsed, player.position, st.night);
+    // 水中悬浮微粒：随相机入水淡入、出水淡出
+    waterMotes.update(elapsed, renderer.camera, renderer.underwaterBlend);
 
     // 开场 cinematic 巡游镜头
     if (cinematic.active) updateCinematic(dt);

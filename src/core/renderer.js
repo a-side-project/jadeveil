@@ -17,6 +17,8 @@ import { createWaterMaterial } from "./water.js";
 // 水下雾：浅处青绿透光，深处转为暗三蓝绿（按深度插值）
 const WATER_FOG_SHALLOW = new THREE.Color(0x2c6d78);
 const WATER_FOG_DEEP = new THREE.Color(0x0b2f3a);
+// 焦散偏青：阳光经过水体后剩下的颜色
+const CAUSTIC_TINT = new THREE.Color(0x8fe6ef);
 
 /* ---------------- 后处理：暗角 + 色彩分级 ---------------- */
 const GradeShader = {
@@ -100,6 +102,8 @@ const GodRayShader = {
     uWeight: { value: 0.42 },
     uThreshold: { value: 0.62 },
     uNight: { value: 0 },
+    // 水下程度：潜水时光束更强、更偏青（光经过水体长波先被吸收）
+    uUnderwater: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -118,6 +122,7 @@ const GodRayShader = {
     uniform float uWeight;
     uniform float uThreshold;
     uniform float uNight;
+    uniform float uUnderwater;
     varying vec2 vUv;
 
     void main() {
@@ -139,7 +144,10 @@ const GodRayShader = {
       float onScreen = step(0.0, uSunScreen.x) * step(uSunScreen.x, 1.0)
                      * step(0.0, uSunScreen.y) * step(uSunScreen.y, 1.0);
       float amt = uStrength * onScreen * (1.0 - uNight * 0.92);
-      gl_FragColor = vec4(base.rgb + acc * amt, base.a);
+      // 水下：丁达尔光束更密集、更明显
+      amt *= 1.0 + uUnderwater * 1.15;
+      vec3 tint = mix(vec3(1.0), vec3(0.55, 0.95, 0.92), uUnderwater);
+      gl_FragColor = vec4(base.rgb + acc * amt * tint, base.a);
     }
   `,
 };
@@ -254,22 +262,33 @@ export class Renderer {
 
   /* ---------------- 体素材质 ---------------- */
   _setupMaterials() {
+    // 所有被注入焦散的材质着色器（每帧同步 uTime / uWaterLevel）
+    this._causticShaders = [];
     const inject = (mat) => {
       mat.onBeforeCompile = (shader) => {
         shader.uniforms.uEmissiveBoost = { value: 0.06 };
+        // 水下焦散：水面波纹把阳光聚成游动的亮网，打在水下的地形与建筑上。
+        // 这是「水里有水」最强的视觉线索 —— 只有水体才会产生这种图案。
+        shader.uniforms.uTime = { value: 0 };
+        shader.uniforms.uWaterLevel = { value: 35 };
+        shader.uniforms.uCausticStrength = { value: 1 };
+        shader.uniforms.uCausticColor = { value: new THREE.Color(0xbfe9ef) };
         mat.userData.shader = shader;
+        this._causticShaders.push(shader);
 
         shader.vertexShader = shader.vertexShader
           .replace(
             "#include <common>",
             `#include <common>
              attribute float aEmissive;
-             varying float vEmissive;`,
+             varying float vEmissive;
+             varying vec3 vCWorld;`,
           )
           .replace(
             "#include <begin_vertex>",
             `#include <begin_vertex>
-             vEmissive = aEmissive;`,
+             vEmissive = aEmissive;
+             vCWorld = (modelMatrix * vec4(position, 1.0)).xyz;`,
           );
 
         shader.fragmentShader = shader.fragmentShader
@@ -277,15 +296,54 @@ export class Renderer {
             "#include <common>",
             `#include <common>
              varying float vEmissive;
-             uniform float uEmissiveBoost;`,
+             varying vec3 vCWorld;
+             uniform float uEmissiveBoost;
+             uniform float uTime;
+             uniform float uWaterLevel;
+             uniform float uCausticStrength;
+             uniform vec3 uCausticColor;
+
+             // 经典焦散图案：两层干涉形成的游动亮网。
+             //
+             // 必须夹紧中间量：原式里的 1.0/length(...) 在 inten 很小时
+             // 会出现除零 → Inf，pow 之后整屏雪白。
+             float causticPattern(vec2 p, float t) {
+               vec2 i = p;
+               float c = 1.0;
+               const float inten = 0.005;
+               for (int n = 0; n < 2; n++) {
+                 float tt = t * (1.0 - (3.5 / float(n + 1)));
+                 i = p + vec2(cos(tt - i.x) + sin(tt + i.y),
+                              sin(tt - i.y) + cos(tt + i.x));
+                 float denom = length(vec2(p.x / (sin(i.x + tt) / inten),
+                                           p.y / (cos(i.y + tt) / inten)));
+                 c += 1.0 / max(denom, 1e-3);
+               }
+               c /= 2.0;
+               c = clamp(c, 0.0, 1.6);
+               c = 1.17 - pow(c, 1.4);
+               return clamp(pow(abs(c), 8.0), 0.0, 0.16);
+             }`,
           )
           .replace(
             "#include <emissivemap_fragment>",
             `#include <emissivemap_fragment>
-             totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uEmissiveBoost * 2.2;`,
+             totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uEmissiveBoost * 2.2;
+
+             // 只要片元在水面以下就投焦散，与相机在哪无关：
+             // 从岸上看水里时湖底的那张亮网也是同一个效果。
+             if (vCWorld.y < uWaterLevel) {
+               float depthMask = smoothstep(uWaterLevel, uWaterLevel - 1.6, vCWorld.y);
+               vec2 cp = vCWorld.xz * 1.75;
+               float c1 = causticPattern(cp, uTime * 0.62);
+               float c2 = causticPattern(cp * 1.9 + 13.0, uTime * 0.47);
+               // c1/c2 各自已限幅在 0.16 以内
+               float caus = clamp(c1 * 0.85 + c2 * 0.60, 0.0, 0.20);
+               totalEmissiveRadiance += uCausticColor * caus * depthMask * uCausticStrength * 0.42;
+             }`,
           );
       };
-      mat.customProgramCacheKey = () => "voxel-emissive";
+      mat.customProgramCacheKey = () => "voxel-emissive-caustic";
       return mat;
     };
 
@@ -409,6 +467,18 @@ export class Renderer {
       this.godrays.uniforms.uNight.value = st.night;
       this.godrays.uniforms.uStrength.value = 0.30 + st.warm * 0.75;
       this.godrays.uniforms.uThreshold.value = 0.55 + st.night * 0.25;
+      // updateWaterView() 需要它来算水下阈值，必须存下来
+      this._nightFactor = st.night;
+    }
+
+    // 水下焦散：颜色跟随太阳，夜间基本消失
+    if (this._causticShaders) {
+      const strength = 1 - st.night * 0.88;
+      for (const s of this._causticShaders) {
+        s.uniforms.uCausticStrength.value = strength;
+        s.uniforms.uWaterLevel.value = this.waterLevel;
+        s.uniforms.uCausticColor.value.copy(st.sunColor).lerp(CAUSTIC_TINT, 0.55);
+      }
     }
   }
 
@@ -461,6 +531,10 @@ export class Renderer {
   /** 推进水面动画时间。 */
   tick(elapsed) {
     if (this.waterUniforms) this.waterUniforms.uTime.value = elapsed;
+    // 焦散与水面波纹同步，否则湖底亮网会和水面脱节
+    if (this._causticShaders) {
+      for (const s of this._causticShaders) s.uniforms.uTime.value = elapsed;
+    }
   }
 
   /* ================= 平面反射 ================= */
@@ -562,6 +636,13 @@ export class Renderer {
     }
 
     if (this.waterUniforms) this.waterUniforms.uUnderwater.value = b;
+    if (this.godrays) this.godrays.uniforms.uUnderwater.value = b;
+
+    // 水下看清暗对比降低、光束阈值下调 —— 水里到处都是散射光
+    if (this.godrays) {
+      const base = 0.55 + this._nightFactor * 0.25;
+      this.godrays.uniforms.uThreshold.value = base * (1 - b) + 0.30 * b;
+    }
   }
 
   /** 初始化反射用的渲染目标与镜面相机。 */

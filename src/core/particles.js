@@ -430,3 +430,100 @@ export class LanternSway {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
+
+/* ---------------- 水中悬浮微粒（海洋雪） ---------------- */
+
+const MOTE_VERT = /* glsl */ `
+  attribute float aPhase;
+  attribute float aSize;
+  uniform float uTime;
+  uniform vec3 uOrigin;
+  uniform float uRange;
+  varying float vFade;
+
+  void main() {
+    vec3 p = position;
+    // 微粒缓慢下沉，并带一点横向摆动 —— 悬浮物在水里的真实运动
+    p.y -= uTime * 0.16 + aPhase * 0.10;
+    p.x += sin(uTime * 0.22 + aPhase * 6.283) * 0.8;
+    p.z += cos(uTime * 0.17 + aPhase * 4.1) * 0.8;
+
+    // 以相机为中心循环平铺：形成「无限」微粒场，
+    // 同时微粒在世界空间里保持静止（不会跟着视角一起漂）。
+    vec3 rel = p - uOrigin;
+    rel = mod(rel + uRange, 2.0 * uRange) - uRange;
+    vec3 world = uOrigin + rel;
+
+    vec4 mv = modelViewMatrix * vec4(world, 1.0);
+    gl_Position = projectionMatrix * mv;
+    gl_PointSize = aSize * 220.0 / max(1.0, -mv.z);
+    // 远离中心处淡出，避免露出明显的立方体边界
+    vFade = 1.0 - smoothstep(uRange * 0.55, uRange, length(rel));
+  }
+`;
+
+const MOTE_FRAG = /* glsl */ `
+  precision mediump float;
+  uniform float uOpacity;
+  varying float vFade;
+  void main() {
+    vec2 d = gl_PointCoord - 0.5;
+    float r = length(d);
+    if (r > 0.5) discard;
+    float a = smoothstep(0.5, 0.05, r) * uOpacity * vFade;
+    gl_FragColor = vec4(0.84, 0.96, 1.0, a);
+  }
+`;
+
+/** 水中的悬浮微粒：只在相机入水时出现，出水即隐。 */
+export class WaterMotes {
+  constructor(scene, count = 700, range = 13) {
+    this.range = range;
+
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const phase = new Float32Array(count);
+    const size = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * range * 2;
+      pos[i * 3 + 1] = (Math.random() - 0.5) * range * 2;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * range * 2;
+      phase[i] = Math.random();
+      size[i] = 0.9 + Math.random() * 2.0;
+    }
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
+    // 顶点在着色器里被平移过，包围盒不可靠，直接关掉视锥剔除
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), range * 4);
+
+    this.uniforms = {
+      uTime: { value: 0 },
+      uOrigin: { value: new THREE.Vector3() },
+      uRange: { value: range },
+      uOpacity: { value: 0 },
+    };
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms,
+      vertexShader: MOTE_VERT,
+      fragmentShader: MOTE_FRAG,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    this.points.visible = false;
+    scene.add(this.points);
+  }
+
+  /** @param {number} underwaterBlend 0..1，来自 renderer.updateWaterView() */
+  update(elapsed, camera, underwaterBlend) {
+    this.uniforms.uTime.value = elapsed;
+    this.uniforms.uOrigin.value.copy(camera.position);
+    this.uniforms.uOpacity.value = underwaterBlend * 0.85;
+    this.points.visible = underwaterBlend > 0.02;
+  }
+}
