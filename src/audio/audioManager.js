@@ -34,7 +34,6 @@ export class AudioManager {
     this.ctx = null;
     this._buffers = {}; // name -> AudioBuffer[]
     this._musicEl = null;
-    this._loading = null;
     this._underwater = 0;
     this.settings = { musicOn: true, musicVol: 0.8, sfxOn: true, sfxVol: 1.0 };
     this._load();
@@ -50,17 +49,16 @@ export class AudioManager {
     try { localStorage.setItem("jadeveil.audio.v1", JSON.stringify(this.settings)); } catch { /* ignore */ }
   }
 
-  /** 惰性创建 AudioContext + 加载素材（幂等）。 */
+  /**
+   * 惰性创建 AudioContext。必须在首次用户手势里「同步」调用，
+   * 以便在同一手势内完成 resume() + play()（自动播放策略要求手势）。
+   * 素材解码异步进行，不阻塞。
+   */
   ensure() {
     if (this.ctx) return this.ctx;
-    if (this._loading) return this._loading;
-    this._loading = this._init();
-    return this._loading;
-  }
-
-  async _init() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     const ctx = new Ctx();
+    this.ctx = ctx;
 
     this.master = ctx.createGain();
     this.master.gain.value = 1;
@@ -79,14 +77,14 @@ export class AudioManager {
     this.sfxLP.connect(this.sfxBus);
     this.sfxBus.connect(this.master);
 
-    this.ctx = ctx;
-
-    await this._loadSfx();
-    this._setupMusic();
-
+    // 手势内立即解锁；后续任何交互再尝试（防御性）
+    if (ctx.state === "suspended") ctx.resume();
     const resume = () => { if (ctx.state === "suspended") ctx.resume(); };
     window.addEventListener("pointerdown", resume);
     window.addEventListener("keydown", resume);
+
+    this._setupMusic();
+    this._loadSfx(); // 异步；未就绪时 play() 静默跳过
 
     return ctx;
   }
@@ -127,9 +125,9 @@ export class AudioManager {
   }
 
   /** 用户手势后：确保上下文运行并开始放音乐。 */
-  async begin() {
-    await this.ensure();
-    if (this.ctx.state === "suspended") await this.ctx.resume();
+  begin() {
+    this.ensure();
+    if (this.ctx.state === "suspended") this.ctx.resume();
     this._applyMusic();
     this._applySfx();
   }
