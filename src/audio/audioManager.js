@@ -119,7 +119,8 @@ export class AudioManager {
     el.src = `${BASE}/music/theme_epic.ogg`;
     el.loop = true;
     el.preload = "auto";
-    el.crossOrigin = "anonymous";
+    // 注意：不要设 crossOrigin。音乐与页面同源，设了会把请求变成 CORS 请求，
+    // 而 Workers 静态资源不返回 ACAO 头，导致 <audio> 拒绝加载。
     const src = this.ctx.createMediaElementSource(el);
     src.connect(this.musicBus);
     this._musicEl = el;
