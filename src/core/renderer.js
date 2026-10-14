@@ -98,7 +98,7 @@ const GodRayShader = {
     uSunScreen: { value: new THREE.Vector2(0.5, 0.8) },
     uStrength: { value: 0.55 },
     uDecay: { value: 0.94 },
-    uDensity: { value: 0.55 },
+    uDensity: { value: 0.45 },
     uWeight: { value: 0.42 },
     uThreshold: { value: 0.62 },
     uNight: { value: 0 },
@@ -148,6 +148,60 @@ const GodRayShader = {
       amt *= 1.0 + uUnderwater * 1.15;
       vec3 tint = mix(vec3(1.0), vec3(0.55, 0.95, 0.92), uUnderwater);
       gl_FragColor = vec4(base.rgb + acc * amt * tint, base.a);
+    }
+  `,
+};
+
+/* FXAA 抗锯齿 —— EffectComposer 会把 MSAA 失效，这里用 FXAA 补齐边缘锯齿。 */
+const FXAAShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uResolution: { value: new THREE.Vector2(1 / 1024, 1 / 512) },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    precision highp float;
+    uniform sampler2D tDiffuse;
+    uniform vec2 uResolution;
+    varying vec2 vUv;
+    #define FXAA_REDUCE_MIN (1.0/128.0)
+    #define FXAA_REDUCE_MUL (1.0/8.0)
+    #define FXAA_SPAN_MAX 8.0
+    void main() {
+      vec3 rgbNW = texture2D(tDiffuse, vUv + vec2(-1.0, -1.0) * uResolution).xyz;
+      vec3 rgbNE = texture2D(tDiffuse, vUv + vec2(1.0, -1.0) * uResolution).xyz;
+      vec3 rgbSW = texture2D(tDiffuse, vUv + vec2(-1.0, 1.0) * uResolution).xyz;
+      vec3 rgbSE = texture2D(tDiffuse, vUv + vec2(1.0, 1.0) * uResolution).xyz;
+      vec4 rgbaM = texture2D(tDiffuse, vUv);
+      vec3 rgbM = rgbaM.xyz;
+      vec3 luma = vec3(0.299, 0.587, 0.114);
+      float lumaNW = dot(rgbNW, luma);
+      float lumaNE = dot(rgbNE, luma);
+      float lumaSW = dot(rgbSW, luma);
+      float lumaSE = dot(rgbSE, luma);
+      float lumaM = dot(rgbM, luma);
+      float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+      float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+      vec2 dir;
+      dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+      dir.y = ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+      float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * FXAA_REDUCE_MUL), FXAA_REDUCE_MIN);
+      float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+      dir = min(vec2(FXAA_SPAN_MAX, FXAA_SPAN_MAX), max(vec2(-FXAA_SPAN_MAX, -FXAA_SPAN_MAX), dir * rcpDirMin)) * uResolution;
+      vec3 rgbA = 0.5 * (texture2D(tDiffuse, vUv + dir * (1.0/3.0 - 0.5)).xyz + texture2D(tDiffuse, vUv + dir * (2.0/3.0 - 0.5)).xyz);
+      vec3 rgbB = rgbA * 0.5 + 0.25 * (texture2D(tDiffuse, vUv + dir * -0.5).xyz + texture2D(tDiffuse, vUv + dir * 0.5).xyz);
+      float lumaB = dot(rgbB, luma);
+      if (lumaB < lumaMin || lumaB > lumaMax) {
+        gl_FragColor = vec4(rgbA, rgbaM.a);
+      } else {
+        gl_FragColor = vec4(rgbB, rgbaM.a);
+      }
     }
   `,
 };
@@ -255,6 +309,11 @@ export class Renderer {
     this.composer.addPass(this.godrays);
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.grade);
+
+    // FXAA 抗锯齿（composer 渲染到 render target 时 MSAA 失效，这里补上）
+    this.fxaa = new ShaderPass(FXAAShader);
+    this.fxaa.uniforms.uResolution.value.set(1 / window.innerWidth, 1 / window.innerHeight);
+    this.composer.addPass(this.fxaa);
 
     this.output = new OutputPass();
     this.composer.addPass(this.output);
@@ -517,6 +576,7 @@ export class Renderer {
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
     this.bloom.resolution.set(w, h);
+    if (this.fxaa) this.fxaa.uniforms.uResolution.value.set(1 / w, 1 / h);
     if (this.reflectRT) {
       this.reflectRT.setSize(
         Math.max(2, Math.floor(w * 0.5)),
