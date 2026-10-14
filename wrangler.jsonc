@@ -1,0 +1,22 @@
+{
+	// JADEVEIL —— 纯静态体素世界（index.html + src/ + vendor/three）。
+	// 与 deb / keel-website 同一套做法：只做 Workers Static Assets，
+	// 没有 Worker 入口脚本，唯一路由是一个 Custom Domain。
+	// 部署命令：npm run deploy（本地 wrangler 4.125.0）
+	"name": "jadeveil",
+	"compatibility_date": "2026-10-14",
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [
+		{
+			"pattern": "jadeveil.vibe.citrolabs.dev",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		// 仓库根目录既是源目录也是部署根：没有 dist/ 副本，
+		// 也就不存在「改了源忘了拷」的问题（同 durable-execution-book）。
+		"directory": "./",
+		"not_found_handling": "404-page"
+	}
+}

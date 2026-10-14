@@ -39,6 +39,10 @@ ego/
 *.mjs.bak
 scratch/
 
+# ---- wrangler 本地状态 / 干跑产物 ----
+.wrangler/
+.wrangler-dry-run/
+
 # 说明：
 #  screenshots/ 保留入库（基线快照需要可复现的视觉证据）
 #  node_modules/ 排除（用 npm install 还原）

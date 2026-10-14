@@ -1,0 +1,2 @@
+three 0.186.1
+vendored from node_modules/three by scripts/vendor-three.mjs

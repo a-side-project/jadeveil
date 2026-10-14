@@ -4,6 +4,10 @@
   "description": "JADEVEIL - A Voxel Realm of Mist and Jade. Procedural pixel-art voxel sandbox in three.js.",
   "main": "index.js",
   "scripts": {
+    "serve": "node serve.mjs 8123",
+    "vendor": "node scripts/vendor-three.mjs",
+    "deploy": "wrangler deploy",
+    "deploy:dry-run": "wrangler deploy --dry-run --outdir=.wrangler-dry-run",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -12,5 +16,8 @@
   "type": "module",
   "dependencies": {
     "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "wrangler": "4.125.0"
   }
 }
