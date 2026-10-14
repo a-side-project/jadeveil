@@ -14,6 +14,10 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { createWaterMaterial } from "./water.js";
 
+// 水下雾：浅处青绿透光，深处转为暗三蓝绿（按深度插值）
+const WATER_FOG_SHALLOW = new THREE.Color(0x2c6d78);
+const WATER_FOG_DEEP = new THREE.Color(0x0b2f3a);
+
 /* ---------------- 后处理：暗角 + 色彩分级 ---------------- */
 const GradeShader = {
   uniforms: {
@@ -473,11 +477,14 @@ export class Renderer {
     const cam = this.camera;
     const L = this.waterLevel;
 
-    // 只在相机高于水面时反射（水下不渲染反射，省开销）
-    if (cam.position.y < L - 1) {
-      this.matWater.visible = false;
-      return;
-    }
+    // 水下：跳过反射渲染（省一次全场景重绘）。
+    //
+    // 注意：绝不能在这里隐藏水面材质！
+    // 潜水时向上看到的正是这层水面本身，曾经这里写了
+    // `this.matWater.visible = false; return;` 且没有恢复，
+    // 导致入水后整个水面消失（用户报告的 bug）。
+    // 水面是否可见由 updateWaterView() 负责，与反射无关。
+    if (cam.position.y < L - 1) return;
 
     const rc = this.reflectCam;
     rc.far = cam.far;
@@ -519,9 +526,49 @@ export class Renderer {
     this.matWater.visible = true;
   }
 
+  /**
+   * 水下氛围：整个场景染成水体色 + 拉近雾距，形成真实的「泡在水里」感。
+   *
+   * 相机会在水面上下频繁穿越，所以用阻尼量 underwaterBlend 平滑过渡，
+   * 避免入水/出水瞬间雾色突变。
+   *
+   * 必须在 applyDayNight() 之后、render() 之前调用。
+   */
+  updateWaterView(dt) {
+    const under = this.camera.position.y < this.waterLevel;
+    const target = under ? 1 : 0;
+    this.underwaterBlend += (target - this.underwaterBlend) * (1 - Math.exp(-9 * dt));
+    const b = this.underwaterBlend;
+
+    if (b > 0.001) {
+      // 越深吸收越强：可见度随深度衰减
+      const depth = Math.max(0, this.waterLevel - this.camera.position.y);
+      const absorb = 1 - Math.exp(-depth * 0.05);
+
+      const night = this.waterUniforms ? this.waterUniforms.uNight.value : 0;
+      const waterFog = this._fogTmp
+        .copy(WATER_FOG_SHALLOW)
+        .lerp(WATER_FOG_DEEP, absorb)
+        .multiplyScalar(1 - night * 0.72);
+
+      this.scene.fog.color.lerp(waterFog, b);
+
+      const baseDensity = this.scene.fog.density;
+      const uwDensity = 0.009 + absorb * 0.020;
+      this.scene.fog.density = baseDensity * (1 - b) + uwDensity * b;
+
+      // 水下整体略压曝光，强化「在水里」的观感
+      this.renderer.toneMappingExposure *= 1 - b * 0.10;
+    }
+
+    if (this.waterUniforms) this.waterUniforms.uUnderwater.value = b;
+  }
+
   /** 初始化反射用的渲染目标与镜面相机。 */
   initReflection(waterLevel = 35) {
     this.waterLevel = waterLevel;
+    this.underwaterBlend = 0;
+    this._fogTmp = new THREE.Color();
     this._reflLook = new THREE.Vector3();
     const w = Math.max(2, Math.floor(window.innerWidth * 0.5));
     const h = Math.max(2, Math.floor(window.innerHeight * 0.5));

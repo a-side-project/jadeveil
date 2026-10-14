@@ -342,6 +342,9 @@ async function boot() {
     // 水面波动
     renderer.tick(elapsed);
 
+    // 水下氛围（雾色/雾距/曝光），必须在 applyDayNight 之后、render 之前
+    renderer.updateWaterView(dt);
+
     // NPC 更新
     npcs.update(dt);
 

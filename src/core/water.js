@@ -28,6 +28,8 @@ export const WaterShader = {
     uReflectMatrix: { value: new THREE.Matrix4() },
     uReflectStrength: { value: 0.82 },
     uWaterLevel: { value: 35.0 },
+    // 水下程度 0..1（由 renderer.updateWaterView 每帧平滑更新）
+    uUnderwater: { value: 0 },
   },
 
   vertexShader: /* glsl */ `
@@ -100,6 +102,7 @@ export const WaterShader = {
     uniform mat4 uReflectMatrix;
     uniform float uReflectStrength;
     uniform float uWaterLevel;
+    uniform float uUnderwater;
 
     varying vec3 vWorldPos;
     varying vec3 vNormal;
@@ -176,14 +179,33 @@ export const WaterShader = {
 
       // 视角透明度：掠射更不透明，俯视更透明
       float alpha = mix(uOpacity, 0.97, fres);
-      alpha = mix(alpha, 0.55, smoothstep(0.0, 6.0, dist) * 0.0);
 
-      // 水下视角：色偏 + 深度吸收 + 体积雾
-      if (cameraPosition.y < uWaterLevel) {
-        float sub = uWaterLevel - cameraPosition.y;
+      // ---------- 从水下向上看：斯涅尔窗 + 全内反射 ----------
+      //
+      // 水面从下方看和从上方看是完全不同的画面：
+      //   · 接近垂直向上 → 斯涅尔窗，水面外的天空/太阳透射进来（明亮）
+      //   · 掠射角     → 全内反射，什么都透不出去，只看到水体自身（暗、青绿）
+      if (uUnderwater > 0.001) {
+        float cosI = clamp(dot(N, -V), 0.0, 1.0);
+        float win = smoothstep(0.52, 0.92, cosI);
+
+        vec3 outside = mix(uSkyColor, uSunColor, 0.30);
+        outside *= 1.0 - uNight * 0.86;
+        outside += vec3(0.04, 0.10, 0.22) * uNight;
+
+        vec3 tir = mix(vec3(0.04, 0.115, 0.155), waterCol * 0.5, 0.45);
+        tir *= 1.0 - uNight * 0.45;
+
+        vec3 underCol = mix(tir, outside, win);
+        // 波峰亮边：即使从下方看，水面依旧有起伏与高光
+        underCol += uSunColor * spec * 0.55 * (1.0 - uNight * 0.7);
+        underCol += uSunColor * caustic * 0.10 * (1.0 - uNight * 0.8);
+
+        col = mix(col, underCol, uUnderwater);
+        alpha = mix(alpha, 1.0, uUnderwater);
+      } else if (cameraPosition.y < uWaterLevel) {
+        // 兼容路径（uUnderwater 尚未生效时）
         col = mix(col, vec3(0.10, 0.30, 0.36), 0.5);
-        col *= exp(-sub * 0.030);
-        col += uSunColor * caustic * 0.12;
         alpha = 0.92;
       }
 
