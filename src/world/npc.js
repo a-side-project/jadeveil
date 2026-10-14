@@ -174,9 +174,11 @@ class Agent {
       if (this.collides(p.x, p.y, p.z)) { p.z -= dz; this.blocked = true; }
     }
 
-    // 垂直：水里上浮（游泳），陆地走重力
+    // 垂直：躯干入水上浮（游泳）；脚在水里=浮在水面（稳定，不再反复震荡）；否则重力
     if (midWater) {
-      this.vy += (2.0 - this.vy) * Math.min(1, dt * 3.5);
+      this.vy += (2.2 - this.vy) * Math.min(1, dt * 4);
+    } else if (feetWater) {
+      this.vy += (0.0 - this.vy) * Math.min(1, dt * 6);
     } else {
       this.vy -= GRAVITY * dt;
     }
@@ -272,7 +274,13 @@ class Agent {
         this._face(wp[0], wp[1], dt);
         if (this.blocked) {
           this.blockedTime += dt;
-          if (this.blockedTime > 1.2) { this._chooseDestination(); this.blockedTime = 0; }
+          if (this.blockedTime > 1.0) {
+            // 撞墙：停下歇一会再寻路，避免原地打转
+            this.state = "idle";
+            this.stateTimer = 2 + Math.random() * 3;
+            this.blockedTime = 0;
+            this.path = null;
+          }
         } else {
           this.blockedTime = 0;
         }
@@ -427,6 +435,24 @@ export class NPCManager {
       place(this.parts.armR, 0.42, 1.05, 0, 0.2, 0.72, 0.2, swing2 - armWave, 0);
       place(this.parts.legL, -0.16, 0.34, 0, 0.22, 0.68, 0.22, swing2, 0);
       place(this.parts.legR, 0.16, 0.34, 0, 0.22, 0.68, 0.22, swing, 0);
+    }
+
+    // NPC 之间分离：避免多人堆叠穿模
+    const minDist = 0.7;
+    for (let i = 0; i < n; i++) {
+      const a = this.agents[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = this.agents[j];
+        const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < minDist * minDist && d2 > 1e-6) {
+          const d = Math.sqrt(d2);
+          const push = (minDist - d) * 0.5;
+          const nx = dx / d, nz = dz / d;
+          a.pos.x -= nx * push; a.pos.z -= nz * push;
+          b.pos.x += nx * push; b.pos.z += nz * push;
+        }
+      }
     }
 
     for (const key of Object.keys(this.parts)) {

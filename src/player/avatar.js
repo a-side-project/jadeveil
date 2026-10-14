@@ -118,14 +118,15 @@ export class Avatar {
       this.legs.push(pivot);
     }
 
-    // 翅膀：飞行时显示并扇动（幻想元素）
+    // 翅膀：飞行时显示并扇动（幻想元素）—— 宽扁、横向展开、向后掠
     this.wings = [];
     for (const s of [-1, 1]) {
       const pivot = new THREE.Group();
-      pivot.position.set(s * 0.40, 0.58, -0.28);
+      pivot.position.set(s * 0.30, 0.62, 0.02); // 肩胛
       body.add(pivot);
-      const wing = part(0.06, 0.50, 1.15, WING, 0.5);
-      wing.position.z = -0.55;
+      const wing = part(0.95, 0.10, 0.80, WING, 0.45); // 翼展 x 厚度 x 弦长
+      wing.position.set(s * 0.52, 0.10, 0.30); // 向外 + 略上 + 向后
+      wing.rotation.y = s * 0.25; // 后掠
       wing.visible = false;
       pivot.add(wing);
       this.wings.push(pivot);
@@ -210,11 +211,13 @@ export class Avatar {
     const flying = this._fly > 0.02;
     for (const w of this.wings) w.visible = flying;
     if (flying) {
-      const flap = Math.sin(t * 34) * 0.55;
-      this.wings[0].rotation.x = -0.45 + flap;
-      this.wings[1].rotation.x = -0.45 - flap;
-      this.wings[0].rotation.z = 0.35 - flap * 0.15;
-      this.wings[1].rotation.z = -0.35 + flap * 0.15;
+      // 同向上下扇动（鸟翼），幅度更大、更灵动
+      const flap = Math.sin(t * 30) * 0.6;
+      this.wings[0].rotation.x = 0.15 + flap;
+      this.wings[1].rotation.x = 0.15 + flap;
+      // 轻微前后挥
+      this.wings[0].rotation.z = 0.12 + Math.sin(t * 30 + 1.2) * 0.08;
+      this.wings[1].rotation.z = -0.12 - Math.sin(t * 30 + 1.2) * 0.08;
     }
 
     // ---------- 头部与躯干 ----------

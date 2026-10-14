@@ -465,8 +465,10 @@ export class Renderer {
     // 体积光参数随昼夜
     if (this.godrays) {
       this.godrays.uniforms.uNight.value = st.night;
-      this.godrays.uniforms.uStrength.value = 0.30 + st.warm * 0.75;
-      this.godrays.uniforms.uThreshold.value = 0.55 + st.night * 0.25;
+      this.godrays.uniforms.uStrength.value = 0.22 + st.warm * 0.6;
+      // 阈值抬高：只让天空/太阳（近白）产生体积光，不再把花瓣/微粒等亮色小点
+      // 当成光源沿太阳方向拖成残影。
+      this.godrays.uniforms.uThreshold.value = 0.80 + st.night * 0.15;
       // updateWaterView() 需要它来算水下阈值，必须存下来
       this._nightFactor = st.night;
     }
@@ -640,8 +642,8 @@ export class Renderer {
 
     // 水下看清暗对比降低、光束阈值下调 —— 水里到处都是散射光
     if (this.godrays) {
-      const base = 0.55 + this._nightFactor * 0.25;
-      this.godrays.uniforms.uThreshold.value = base * (1 - b) + 0.30 * b;
+      const base = 0.80 + this._nightFactor * 0.15;
+      this.godrays.uniforms.uThreshold.value = base * (1 - b) + 0.35 * b;
     }
   }
 
