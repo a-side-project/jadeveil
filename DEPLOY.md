@@ -203,8 +203,10 @@ curl: (35) LibreSSL ... sslv3 alert handshake failure
   原因是 npm 新下载的二进制带了 `com.apple.quarantine`。
   修复：`xattr -dr com.apple.quarantine node_modules`（或先 `npm install --ignore-scripts` 再解隔离）。
 - **拿带 `access:write` 的凭据（需要时）**：`cf auth login` 的本地回调只等 **120 秒**（硬编码），
-  人来点授权很容易超时。本次做法是用 **同一个 OAuth 客户端 / 同一组 scope** 起一个长驻回调服务
- （写在 `/tmp/cf-oauth-long.mjs`，成功后按 CLI 自己的格式写回 `~/.cf/config.toml`，600 权限），
-  授权页仍然是用户本人在浏览器里确认。凭据只落在 `~/.cf/config.toml`，不进仓库、不进报告。
+  人来点授权很容易超时。仓库里备了 `scripts/cf-auth-login-long.mjs`：用 **同一个 OAuth 客户端 / 同一组 scope / 同一个授权页**，
+  但回调服务长驻 45 分钟，成功后按 CLI 自己的格式写回 `~/.cf/config.toml`（600 权限）。
+  用法：先 `cf auth login` 拿到授权 URL（存成 `/tmp/cf-auth-url.txt`），停掉它，
+  再 `node scripts/cf-auth-login-long.mjs &`，把 `/tmp/cf-oauth-url.txt` 的链接交给本人确认。
+  授权始终由用户本人在浏览器里完成。凭据只落在 `~/.cf/config.toml`，不进仓库、不进报告。
 - **零信任登录**：`<team>.cloudflareaccess.com` 的登录页支持 `OIDC SSO` 与邮箱验证码两种；
   Lark SSO 会话还在时会一键入，否则需要本人完成登录/验证码。
