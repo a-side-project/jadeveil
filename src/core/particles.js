@@ -201,7 +201,109 @@ export class SmokeField {
   }
 }
 
-/* ---------------- 灯笼摇摆 ---------------- */
+/**
+ * 分层雾带 —— 大气透视的「纵深」来源。
+ *
+ * 在几个不同高度平铺半透明的云雾面，近景清晰、中景淡、远景只剩剪影。
+ * 面片跟随相机（只水平跟随），配合全局雾效形成层次。
+ */
+export class MistLayers {
+  constructor(scene, heights = [38, 46, 56, 70]) {
+    this.layers = [];
+    this.scene = scene;
+
+    const tex = this._makeMistTexture();
+
+    for (let i = 0; i < heights.length; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        // 极淡：多层叠加不能把画面洗白，只做微弱的纵深提示
+        opacity: 0.062 - i * 0.012,
+        color: new THREE.Color(0xdfe9f2),
+        fog: false,
+        blending: THREE.NormalBlending,
+      });
+      const geo = new THREE.PlaneGeometry(1, 1);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.scale.set(520, 520, 1);
+      mesh.position.y = heights[i];
+      mesh.renderOrder = -500 + i;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      this.layers.push({ mesh, mat, speed: 0.6 + i * 0.35, y: heights[i], baseOpacity: 0.062 - i * 0.012 });
+    }
+  }
+
+  /** 生成柔和的云雾贴图（逐像素，带 alpha）。 */
+  _makeMistTexture(size = 128) {
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const ctx = c.getContext("2d");
+    const img = ctx.createImageData(size, size);
+    const hash = (x, y) => {
+      let h = x * 374761393 + y * 668265263;
+      h = (h ^ (h >>> 13)) * 1274126177;
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+    };
+    const fade = (t) => t * t * (3 - 2 * t);
+    const noise = (x, y) => {
+      const xi = Math.floor(x), yi = Math.floor(y);
+      const xf = x - xi, yf = y - yi;
+      const u = fade(xf), v = fade(yf);
+      const a = hash(xi, yi), b = hash(xi + 1, yi);
+      const cc = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+      return (a + (b - a) * u) + ((cc + (d - cc) * u) - (a + (b - a) * u)) * v;
+    };
+    const fbm = (x, y) => {
+      let v = 0, amp = 0.5, f = 1;
+      for (let i = 0; i < 4; i++) { v += amp * noise(x * f, y * f); f *= 2.03; amp *= 0.5; }
+      return v;
+    };
+    // 可平铺：用环形坐标采样
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const ang = (x / size) * Math.PI * 2;
+        const rad = (y / size) * Math.PI * 2;
+        const nx = Math.cos(ang) * 6, ny = Math.sin(ang) * 6;
+        const n = fbm(nx + 10, ny + 10) * 0.6 + fbm(ny * 1.7 + 3, nx * 1.7 + 7) * 0.4;
+        const a = Math.max(0, Math.min(255, (n - 0.42) * 620));
+        const o = (y * size + x) * 4;
+        img.data[o] = 240; img.data[o + 1] = 244; img.data[o + 2] = 250;
+        img.data[o + 3] = a;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(2, 2);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  update(elapsed, camera, nightFactor = 0) {
+    for (const L of this.layers) {
+      // 水平跟随相机（保持覆盖），并缓慢漂移
+      const drift = (elapsed * L.speed) % 520;
+      L.mesh.position.x = camera.position.x + drift;
+      L.mesh.position.z = camera.position.z + drift * 0.35;
+
+      // 关键：相机高于雾层时淡出。
+      // 否则从高空俯瞰时，水平面会被掠射角拉伸成不透明的白墙。
+      const above = camera.position.y - L.y;
+      const fade = Math.max(0, Math.min(1, 1 - above / 44));
+      L.mat.opacity = L.baseOpacity * fade * (1 - nightFactor * 0.45);
+      L.mesh.visible = fade > 0.01;
+
+      // 夜晚变暗
+      L.mat.color.setRGB(0.87 - nightFactor * 0.6, 0.91 - nightFactor * 0.6, 0.97 - nightFactor * 0.5);
+    }
+  }
+}
+
 
 export class LanternSway {
   constructor(instMesh, basePositions) {

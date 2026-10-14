@@ -6,21 +6,21 @@ import * as THREE from "three";
 
 /** 关键帧：每个时刻的天空 / 光照配色。 */
 const KEYS = [
-  { t: 0,    zenith: 0x0d1738, horizon: 0x1e2c52, ground: 0x0d1220, sun: 0x5a6ea8, sunI: 0.30, hemiSky: 0x3a4a7e, hemiGround: 0x1a2030, hemiI: 0.52, fog: 0x1a2444, fogD: 0.0092, exposure: 1.30, night: 1.0, warm: 0 },
-  { t: 270,  zenith: 0x122048, horizon: 0x2a3a62, ground: 0x121828, sun: 0x6a7eb8, sunI: 0.36, hemiSky: 0x44548a, hemiGround: 0x202838, hemiI: 0.58, fog: 0x223052, fogD: 0.0090, exposure: 1.32, night: 1.0, warm: 0 },
-  { t: 330,  zenith: 0x2a3f74, horizon: 0x8a5a72, ground: 0x24222e, sun: 0xa86a78, sunI: 0.55, hemiSky: 0x5e5e92, hemiGround: 0x302838, hemiI: 0.70, fog: 0x6a4a62, fogD: 0.0086, exposure: 1.30, night: 0.72, warm: 0.15 },
-  { t: 375,  zenith: 0x3a6aa8, horizon: 0xe8a074, ground: 0x3a3630, sun: 0xffb070, sunI: 1.05, hemiSky: 0x8aa8d0, hemiGround: 0x4a4038, hemiI: 0.82, fog: 0xd8a888, fogD: 0.0080, exposure: 1.20, night: 0.28, warm: 0.55 },
-  { t: 420,  zenith: 0x2f6fb5, horizon: 0xf0c9a0, ground: 0x5a5648, sun: 0xffd9a0, sunI: 1.35, hemiSky: 0xa8c8e8, hemiGround: 0x6a6050, hemiI: 0.78, fog: 0xe4cbb0, fogD: 0.0078, exposure: 1.08, night: 0.06, warm: 0.30 },
-  { t: 480,  zenith: 0x2a6ec4, horizon: 0xe8dcc8, ground: 0x6a6656, sun: 0xfff0d0, sunI: 1.60, hemiSky: 0xb8d4f0, hemiGround: 0x746a58, hemiI: 0.84, fog: 0xdce8f4, fogD: 0.0068, exposure: 1.06, night: 0.0, warm: 0.10 },
-  { t: 540,  zenith: 0x2a6ec4, horizon: 0xcfe4f2, ground: 0x6e6a58, sun: 0xfff2d4, sunI: 1.75, hemiSky: 0xbcd8f0, hemiGround: 0x7a7060, hemiI: 0.88, fog: 0xd6e6f2, fogD: 0.0062, exposure: 1.06, night: 0.0, warm: 0 },
-  { t: 720,  zenith: 0x1f66c8, horizon: 0xd8ecfa, ground: 0x76725e, sun: 0xfffaf0, sunI: 1.95, hemiSky: 0xc8e0f8, hemiGround: 0x847a66, hemiI: 0.95, fog: 0xdcecf8, fogD: 0.0055, exposure: 1.04, night: 0.0, warm: 0 },
-  { t: 900,  zenith: 0x2a6ec0, horizon: 0xd0e2f0, ground: 0x726e5a, sun: 0xfff0cc, sunI: 1.70, hemiSky: 0xbcd4ec, hemiGround: 0x7c7260, hemiI: 0.88, fog: 0xd4e2ee, fogD: 0.0062, exposure: 1.06, night: 0.0, warm: 0 },
-  { t: 990,  zenith: 0x2f5fa8, horizon: 0xf0b478, ground: 0x5e5648, sun: 0xffb464, sunI: 1.30, hemiSky: 0xa8b8d8, hemiGround: 0x6a5a48, hemiI: 0.76, fog: 0xe0b088, fogD: 0.0080, exposure: 1.10, night: 0.08, warm: 0.45 },
-  { t: 1035, zenith: 0x2f5a9c, horizon: 0xff9a52, ground: 0x50463a, sun: 0xff9a4a, sunI: 1.15, hemiSky: 0xa898b0, hemiGround: 0x5e4a38, hemiI: 0.72, fog: 0xe89a62, fogD: 0.0084, exposure: 1.16, night: 0.14, warm: 0.85 },
-  { t: 1080, zenith: 0x2a3f78, horizon: 0xe07a4a, ground: 0x3e3630, sun: 0xff8a48, sunI: 0.95, hemiSky: 0x8a7aa0, hemiGround: 0x4a3a30, hemiI: 0.74, fog: 0xc07a58, fogD: 0.0086, exposure: 1.22, night: 0.34, warm: 0.60 },
-  { t: 1140, zenith: 0x22305e, horizon: 0x9a5a68, ground: 0x262430, sun: 0xb06a68, sunI: 0.55, hemiSky: 0x5a5478, hemiGround: 0x302838, hemiI: 0.66, fog: 0x7a4a58, fogD: 0.0090, exposure: 1.28, night: 0.72, warm: 0.18 },
-  { t: 1230, zenith: 0x122048, horizon: 0x2a3a62, ground: 0x121828, sun: 0x6a7eb8, sunI: 0.36, hemiSky: 0x44548a, hemiGround: 0x202838, hemiI: 0.56, fog: 0x223052, fogD: 0.0092, exposure: 1.32, night: 1.0, warm: 0 },
-  { t: 1440, zenith: 0x0d1738, horizon: 0x1e2c52, ground: 0x0d1220, sun: 0x5a6ea8, sunI: 0.30, hemiSky: 0x3a4a7e, hemiGround: 0x1a2030, hemiI: 0.52, fog: 0x1a2444, fogD: 0.0092, exposure: 1.30, night: 1.0, warm: 0 },
+  { t: 0,    zenith: 0x0d1738, horizon: 0x1e2c52, ground: 0x0d1220, sun: 0x5a6ea8, sunI: 0.30, hemiSky: 0x3a4a7e, hemiGround: 0x1a2030, hemiI: 0.52, fog: 0x1a2444, fogD: 0.0028, exposure: 1.30, night: 1.0, warm: 0 },
+  { t: 270,  zenith: 0x122048, horizon: 0x2a3a62, ground: 0x121828, sun: 0x6a7eb8, sunI: 0.36, hemiSky: 0x44548a, hemiGround: 0x202838, hemiI: 0.58, fog: 0x223052, fogD: 0.0027, exposure: 1.32, night: 1.0, warm: 0 },
+  { t: 330,  zenith: 0x2a3f74, horizon: 0x8a5a72, ground: 0x24222e, sun: 0xa86a78, sunI: 0.55, hemiSky: 0x5e5e92, hemiGround: 0x302838, hemiI: 0.70, fog: 0x6a4a62, fogD: 0.0026, exposure: 1.30, night: 0.72, warm: 0.15 },
+  { t: 375,  zenith: 0x3a6aa8, horizon: 0xe8a074, ground: 0x3a3630, sun: 0xffb070, sunI: 1.05, hemiSky: 0x8aa8d0, hemiGround: 0x4a4038, hemiI: 0.82, fog: 0xd8a888, fogD: 0.0024, exposure: 1.20, night: 0.28, warm: 0.55 },
+  { t: 420,  zenith: 0x2f6fb5, horizon: 0xf0c9a0, ground: 0x5a5648, sun: 0xffd9a0, sunI: 1.35, hemiSky: 0xa8c8e8, hemiGround: 0x6a6050, hemiI: 0.78, fog: 0xe4cbb0, fogD: 0.0023, exposure: 1.08, night: 0.06, warm: 0.30 },
+  { t: 480,  zenith: 0x2a6ec4, horizon: 0xe8dcc8, ground: 0x6a6656, sun: 0xfff0d0, sunI: 1.60, hemiSky: 0xb8d4f0, hemiGround: 0x746a58, hemiI: 0.84, fog: 0xdce8f4, fogD: 0.0020, exposure: 1.06, night: 0.0, warm: 0.10 },
+  { t: 540,  zenith: 0x2a6ec4, horizon: 0xcfe4f2, ground: 0x6e6a58, sun: 0xfff2d4, sunI: 1.75, hemiSky: 0xbcd8f0, hemiGround: 0x7a7060, hemiI: 0.88, fog: 0xd6e6f2, fogD: 0.0019, exposure: 1.06, night: 0.0, warm: 0 },
+  { t: 720,  zenith: 0x1f66c8, horizon: 0xd8ecfa, ground: 0x76725e, sun: 0xfffaf0, sunI: 1.95, hemiSky: 0xc8e0f8, hemiGround: 0x847a66, hemiI: 0.95, fog: 0xdcecf8, fogD: 0.0016, exposure: 1.04, night: 0.0, warm: 0 },
+  { t: 900,  zenith: 0x2a6ec0, horizon: 0xd0e2f0, ground: 0x726e5a, sun: 0xfff0cc, sunI: 1.70, hemiSky: 0xbcd4ec, hemiGround: 0x7c7260, hemiI: 0.88, fog: 0xd4e2ee, fogD: 0.0019, exposure: 1.06, night: 0.0, warm: 0 },
+  { t: 990,  zenith: 0x2f5fa8, horizon: 0xf0b478, ground: 0x5e5648, sun: 0xffb464, sunI: 1.30, hemiSky: 0xa8b8d8, hemiGround: 0x6a5a48, hemiI: 0.76, fog: 0xe0b088, fogD: 0.0024, exposure: 1.10, night: 0.08, warm: 0.45 },
+  { t: 1035, zenith: 0x2f5a9c, horizon: 0xff9a52, ground: 0x50463a, sun: 0xff9a4a, sunI: 1.15, hemiSky: 0xa898b0, hemiGround: 0x5e4a38, hemiI: 0.72, fog: 0xe89a62, fogD: 0.0025, exposure: 1.16, night: 0.14, warm: 0.85 },
+  { t: 1080, zenith: 0x2a3f78, horizon: 0xe07a4a, ground: 0x3e3630, sun: 0xff8a48, sunI: 0.95, hemiSky: 0x8a7aa0, hemiGround: 0x4a3a30, hemiI: 0.74, fog: 0xc07a58, fogD: 0.0026, exposure: 1.22, night: 0.34, warm: 0.60 },
+  { t: 1140, zenith: 0x22305e, horizon: 0x9a5a68, ground: 0x262430, sun: 0xb06a68, sunI: 0.55, hemiSky: 0x5a5478, hemiGround: 0x302838, hemiI: 0.66, fog: 0x7a4a58, fogD: 0.0027, exposure: 1.28, night: 0.72, warm: 0.18 },
+  { t: 1230, zenith: 0x122048, horizon: 0x2a3a62, ground: 0x121828, sun: 0x6a7eb8, sunI: 0.36, hemiSky: 0x44548a, hemiGround: 0x202838, hemiI: 0.56, fog: 0x223052, fogD: 0.0028, exposure: 1.32, night: 1.0, warm: 0 },
+  { t: 1440, zenith: 0x0d1738, horizon: 0x1e2c52, ground: 0x0d1220, sun: 0x5a6ea8, sunI: 0.30, hemiSky: 0x3a4a7e, hemiGround: 0x1a2030, hemiI: 0.52, fog: 0x1a2444, fogD: 0.0028, exposure: 1.30, night: 1.0, warm: 0 },
 ];
 
 const lerp = (a, b, t) => a + (b - a) * t;

@@ -14,7 +14,7 @@ import { Interaction } from "./player/interaction.js";
 import { HUD } from "./ui/hud.js";
 import { NPCManager } from "./world/npc.js";
 import { CITY_PLAN } from "./world/cityPlan.js";
-import { PetalField, SmokeField, LanternSway } from "./core/particles.js";
+import { PetalField, SmokeField, LanternSway, MistLayers } from "./core/particles.js";
 import { COLLISION_TEST_SOURCE } from "../tests/collision.test.mjs";
 import { ISLAND_ACCESS_TEST_SOURCE } from "../tests/island-access.test.mjs";
 import { BLOCKS } from "./world/blocks.js";
@@ -155,10 +155,14 @@ async function boot() {
   }
   const smoke = new SmokeField(renderer.scene, smokeSources, 22);
   const lanternSway = new LanternSway(glowCore.mesh, glowCore.positions);
+  // 分层雾带：大气透视的纵深来源
+  const mist = new MistLayers(renderer.scene, [38, 46, 56, 70]);
 
-  // 开场遮罩点击进入
+  // 开场遮罩点击进入（先放一段 cinematic 巡游，再交还给玩家）
   document.getElementById("overlay").addEventListener("click", () => {
-    canvas.requestPointerLock();
+    if (cinematic.active) return;
+    startCinematic();
+    setTimeout(() => canvas.requestPointerLock(), 300);
   });
 
   // 快捷键
@@ -209,6 +213,52 @@ async function boot() {
   let elapsed = 0;
   let frameCount = 0;
   const sunTarget = new THREE.Vector3();
+
+  /* ---------------- 开场 cinematic 巡游镜头 ---------------- */
+  // 从高空缓推入城：大幅提升第一印象的震撼度
+  const CINE_KEY = [
+    { t: 0.0, pos: [0, 178, 268], look: [0, 90, -70] },
+    { t: 0.35, pos: [46, 132, 178], look: [0, 82, -60] },
+    { t: 0.68, pos: [22, 86, 128], look: [0, 62, -70] },
+    { t: 1.0, pos: [0, 48, 96], look: [0, 42, -60] },
+  ];
+  const cinematic = { active: false, t: 0, dur: 7.5 };
+  const _cp = new THREE.Vector3();
+  const _cl = new THREE.Vector3();
+
+  function sampleCine(u, outPos, outLook) {
+    let i = 0;
+    while (i < CINE_KEY.length - 2 && CINE_KEY[i + 1].t <= u) i++;
+    const a = CINE_KEY[i], b = CINE_KEY[i + 1];
+    const f = Math.max(0, Math.min(1, (u - a.t) / (b.t - a.t || 1)));
+    const s = f * f * (3 - 2 * f);
+    outPos.set(
+      a.pos[0] + (b.pos[0] - a.pos[0]) * s,
+      a.pos[1] + (b.pos[1] - a.pos[1]) * s,
+      a.pos[2] + (b.pos[2] - a.pos[2]) * s,
+    );
+    outLook.set(
+      a.look[0] + (b.look[0] - a.look[0]) * s,
+      a.look[1] + (b.look[1] - a.look[1]) * s,
+      a.look[2] + (b.look[2] - a.look[2]) * s,
+    );
+  }
+
+  function updateCinematic(dt) {
+    cinematic.t += dt / cinematic.dur;
+    const u = Math.min(1, cinematic.t);
+    sampleCine(u, _cp, _cl);
+    renderer.camera.position.copy(_cp);
+    renderer.camera.lookAt(_cl);
+    renderer.camera.fov = 62;
+    renderer.camera.updateProjectionMatrix();
+    if (u >= 1) cinematic.active = false;
+  }
+
+  function startCinematic() {
+    cinematic.active = true;
+    cinematic.t = 0;
+  }
 
   function loop() {
     requestAnimationFrame(loop);
@@ -276,6 +326,10 @@ async function boot() {
     petals.update(elapsed, player.position);
     smoke.update(elapsed);
     lanternSway.update(elapsed);
+    mist.update(elapsed, renderer.camera, st.night);
+
+    // 开场 cinematic 巡游镜头
+    if (cinematic.active) updateCinematic(dt);
 
     // 渲染
     renderer.render();
@@ -336,6 +390,20 @@ async function boot() {
     },
     setMode(m) {
       player.mode = m;
+    },
+    /** 重放开场巡游镜头。 */
+    playCinematic: () => startCinematic(),
+    /** 全城最佳俯瞰机位（浮岛高度，朝主殿与通天塔）。 */
+    heroView() {
+      cinematic.active = false;
+      player.flying = true;
+      player.position.set(-14, 142, 62);
+      player.velocity.set(0, 0, 0);
+      player.yaw = Math.PI + 0.18;
+      player.targetYaw = player.yaw;
+      player.pitch = -0.30;
+      player.targetPitch = player.pitch;
+      chunks.update(player.position, true);
     },
     setQuality(level) {
       const p = chunks.setQuality(level);

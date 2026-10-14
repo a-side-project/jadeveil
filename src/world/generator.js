@@ -209,20 +209,36 @@ export class WorldGenerator {
 
   /* ================= 主城 ================= */
 
-  /** 把主城范围内的地面整平并铺上青石板。 */
+  /** 把主城范围内及中轴大道的地面整平并铺上青石板。 */
   flattenCity() {
     const w = this.world;
     const R = CITY.plazaRadius + 8;
+    // 中轴大道延伸得比城区更远，必须一并整平，
+    // 否则牌坊/城门/长街会被埋在自然地形里。
+    const CORRIDOR_HALF = 26;
+    const Z_MIN = -118;
+    const Z_MAX = 118;
+
+    const flattenAt = (x, z) => {
+      const h = this.heightAt(x, z);
+      for (let y = CITY.baseY + 1; y <= h; y++) w.set(x, y, z, ID.air);
+      for (let y = h + 1; y <= CITY.baseY; y++) w.set(x, y, z, ID.dirt);
+      w.set(x, CITY.baseY, z, ID.slate);
+    };
+
+    // 1) 主城圆形台地
     for (let x = -R; x <= R; x++) {
       for (let z = -R; z <= R; z++) {
-        const d = Math.hypot(x, z);
-        if (d > R) continue;
-        const h = this.heightAt(x, z);
-        // 削平高于地坪的部分
-        for (let y = CITY.baseY + 1; y <= h; y++) w.set(x, y, z, ID.air);
-        // 填平低于地坪的部分
-        for (let y = h + 1; y <= CITY.baseY; y++) w.set(x, y, z, ID.dirt);
-        w.set(x, CITY.baseY, z, ID.slate);
+        if (Math.hypot(x, z) > R) continue;
+        flattenAt(x, z);
+      }
+    }
+
+    // 2) 中轴大道走廊（南接城门，北连宝塔）
+    for (let x = -CORRIDOR_HALF; x <= CORRIDOR_HALF; x++) {
+      for (let z = Z_MIN; z <= Z_MAX; z++) {
+        if (Math.hypot(x, z) <= R) continue; // 已由台地处理
+        flattenAt(x, z);
       }
     }
     return this;
@@ -820,10 +836,155 @@ export class WorldGenerator {
     return removed;
   }
 
+  /**
+   * 巨型地标：通天宝塔 —— 全城视觉锚点。
+   *
+   * 设计目的：制造「尺度参照」。旁边是正常尺度的主殿与 NPC，
+   * 对比之下才能感知宝塔的巨大，从而产生震撼与方向感。
+   */
+  buildGrandPagoda(cx, cz, levels = 9) {
+    const w = this.world;
+    const base = CITY.baseY;
+    const R0 = 15;
+
+    // ---- 三层巨型台基 ----
+    for (let layer = 0; layer < 3; layer++) {
+      const ex = R0 + 6 - layer * 2;
+      const y = base + 1 + layer * 2;
+      for (let x = cx - ex; x <= cx + ex; x++) {
+        for (let z = cz - ex; z <= cz + ex; z++) {
+          for (let k = 0; k < 2; k++) w.set(x, y + k, z, ID.marble);
+        }
+      }
+      if (layer === 2) {
+        for (let x = cx - ex; x <= cx + ex; x++) {
+          w.set(x, y + 2, cz - ex, ID.railing_marble);
+          w.set(x, y + 2, cz + ex, ID.railing_marble);
+        }
+        for (let z = cz - ex; z <= cz + ex; z++) {
+          w.set(cx - ex, y + 2, z, ID.railing_marble);
+          w.set(cx + ex, y + 2, z, ID.railing_marble);
+        }
+      }
+    }
+    let y = base + 7;
+
+    // ---- 逐层塔身 + 重檐 ----
+    for (let l = 0; l < levels; l++) {
+      const r = Math.max(3, R0 - l);
+      const bodyH = l === 0 ? 9 : 6;
+
+      for (let x = cx - r; x <= cx + r; x++) {
+        for (let z = cz - r; z <= cz + r; z++) {
+          const onEdge = x === cx - r || x === cx + r || z === cz - r || z === cz + r;
+          if (!onEdge) continue;
+          for (let k = 0; k < bodyH; k++) {
+            const isWindow = k >= 2 && k <= 3 && (x + z) % 4 === 0;
+            w.set(x, y + k, z, isWindow ? ID.beam_painted : ID.wall_red);
+          }
+        }
+      }
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          for (let k = 0; k < bodyH; k++) w.set(cx + sx * r, y + k, cz + sz * r, ID.pillar_red);
+        }
+      }
+      for (let x = cx - r; x <= cx + r; x++) {
+        w.set(x, y + bodyH - 1, cz - r, ID.beam_painted);
+        w.set(x, y + bodyH - 1, cz + r, ID.beam_painted);
+      }
+      w.set(cx, y + Math.floor(bodyH / 2), cz, ID.glow);
+      this.landmarks.push({ type: "lantern", pos: [cx, y + Math.floor(bodyH / 2), cz] });
+
+      // 层层外挑的屋檐
+      this.buildRoof(cx, cz, r + 3, r + 3, y + bodyH, { style: "gold", upturn: 3 });
+
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const lx = cx + sx * (r + 3);
+          const lz = cz + sz * (r + 3);
+          w.set(lx, y + bodyH + 4, lz, ID.lantern);
+          this.landmarks.push({ type: "lantern", pos: [lx, y + bodyH + 4, lz] });
+        }
+      }
+      y += bodyH + 4;
+    }
+
+    // ---- 塔刹宝顶 ----
+    for (let k = 0; k < 7; k++) w.set(cx, y + k, cz, ID.gold_brick);
+    w.set(cx, y + 7, cz, ID.glow);
+    this.landmarks.push({ type: "lantern", pos: [cx, y + 7, cz] });
+    w.set(cx, y + 9, cz, ID.glow);
+    this.landmarks.push({ type: "lantern", pos: [cx, y + 9, cz] });
+    this.landmarks.push({ type: "grandpagoda", pos: [cx, y + 7, cz] });
+    return y + 9;
+  }
+
+  /** 远景山峦剪影 —— 层次与纵深。 */
+  buildFarMountains() {
+    const w = this.world;
+    const s = this.seed;
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2 + hash2i(i, 3, s + 401) * 0.24;
+      const dist = 138 + hash2i(i, 7, s + 402) * 26;
+      const cx = Math.round(Math.cos(a) * dist);
+      const cz = Math.round(Math.sin(a) * dist);
+      const peak = 96 + Math.round(hash2i(i, 11, s + 403) * 44);
+      const rad = 14 + Math.round(hash2i(i, 13, s + 404) * 12);
+
+      for (let x = cx - rad; x <= cx + rad; x++) {
+        for (let z = cz - rad; z <= cz + rad; z++) {
+          const d = Math.hypot(x - cx, z - cz);
+          if (d > rad) continue;
+          const t = 1 - d / rad;
+          const top = Math.round(CITY.baseY + Math.pow(t, 0.75) * (peak - CITY.baseY));
+          for (let yy = Math.max(0, top - 26); yy <= top; yy++) {
+            const depth = top - yy;
+            let id = ID.rock;
+            if (depth === 0) id = top > 118 ? ID.marble : ID.moss_stone;
+            else if (depth < 5) id = ID.stone_dark;
+            w.set(x, yy, z, id);
+          }
+        }
+      }
+    }
+    return this;
+  }
+
+  /** 低空云海 —— 环绕主城的云带（避开城区上方，不遮蔽全城）。 */
+  buildCloudSea() {
+    const w = this.world;
+    const s = this.seed;
+    for (let i = 0; i < 420; i++) {
+      const a = hash2i(i, 21, s + 501) * Math.PI * 2;
+      // 只落在城区之外（城墘半径 62），形成环绕的云海
+      const dist = 96 + hash2i(i, 23, s + 502) * 72;
+      const cx = Math.round(Math.cos(a) * dist);
+      const cz = Math.round(Math.sin(a) * dist);
+      // 低于城台地坪（34），只填山谷，不挡城
+      const cy = 38 + Math.round(hash2i(i, 27, s + 503) * 8);
+      const rx = 7 + Math.round(hash2i(i, 29, s + 504) * 11);
+      const rz = 7 + Math.round(hash2i(i, 31, s + 505) * 11);
+      for (let x = cx - rx; x <= cx + rx; x++) {
+        for (let z = cz - rz; z <= cz + rz; z++) {
+          const d = Math.hypot((x - cx) / rx, (z - cz) / rz);
+          if (d > 1) continue;
+          const n = valueNoise2(x * 0.09, z * 0.09, s + 506);
+          if (n + (1 - d) * 0.7 < 0.6) continue;
+          w.setIfAir(x, cy, z, ID.cloud);
+          if (n > 0.72) w.setIfAir(x, cy + 1, z, ID.cloud);
+        }
+      }
+    }
+    return this;
+  }
+
   /* ================= 总装 ================= */
 
   generate() {
     this.generateTerrain();
+    // 远景山峦：在生成半径外缘堆山，制造纵深
+    this.buildFarMountains();
     this.flattenCity();
     this.buildAvenue();
     this.buildPond();
@@ -882,7 +1043,12 @@ export class WorldGenerator {
     }
 
     this.buildClouds();
+    // 低空云海：从高处俯瞰形成「云上之城」
+    this.buildCloudSea();
     this.scatterVegetation();
+
+    // 巨型地标：通天宝塔，立于中轴主殿之后，全城可见
+    this.buildGrandPagoda(0, -92, 9);
 
     return this.world;
   }
