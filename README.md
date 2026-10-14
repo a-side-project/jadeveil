@@ -398,9 +398,10 @@ feature/visual-impact     → 后续视觉优化分支
 放弃合成音色 —— 现在播放**真实录制的音频素材**（CC0 / CC-BY，详见 `audio/CREDITS.md`），
 全部打包进仓库、离线可用、零运行时外链。
 
-**背景音乐**：`audio/music/theme.ogg` —— "Lotus Pond"（BiteMe Games，CC0），
-约 1 分钟古筝 / 竹笛 / 鼓的国风循环，贴合潘达利亚「雾与玉」的氛围，经
-`<audio>` + MediaElementSource 接入 Web Audio 图，走音乐总线（独立开关与音量）。
+(historical third-party music note removed)
+(historical third-party music note removed)
+(historical third-party music note removed)
+MediaElementSource 接入 Web Audio 图，走音乐总线（独立开关与音量）。
 
 **音效**（39 个文件，按材质/场景分类）：
 - 破坏/放置：石（挖矿音）、木、玻璃、金属、植物、土
@@ -646,5 +647,20 @@ window.__pandaria.runIslandAccessTests()
 验证：32 个 NPC 无一人穿墙（insideSolid=0）、全部贴地（32/32）、玩家靠近时
 正确进入 greet 并显示气泡；全量回归（quality/water/worldguard/collision/island）
 保持绿色。
+
+---
+
+## 十六、繁荣主城（NPC 寻路 + 固定岗位）
+
+用户要求「非常聪明、非常繁荣的主城」。NPC 数量从 32 提升到 **88**：
+
+- **18 个固定岗位**（守卫站岗、商人守摊、武僧值守、长者歇脚），驻留原地、偶尔转身/招手
+- **70 个漫游者**，满城随机目的地，靠 **A\* 导航网格**（`src/world/navgrid.js`，
+  2 格一单元、街道层高度过滤）寻路，绕过墙与建筑，不再撞墙
+- 仍保留真实物理（重力 + AABB 碰撞）与状态机（idle/travel/station/greet）
+
+**打招呼气泡改为屏幕空间覆盖层**：之前用 3D Sprite，亮色文字被 bloom + 体积光
+（god-ray）当强光源，沿太阳方向拉成光条、渲染出无数重影。现在把气泡投影到
+屏幕坐标、用 DOM 覆盖层绘制（与 HUD 同层），彻底脱离 3D 后处理。
 
 

@@ -13,8 +13,8 @@ import { Player, CAMERA_LABELS } from "./player/controller.js";
 import { Avatar } from "./player/avatar.js";
 import { Interaction } from "./player/interaction.js";
 import { HUD } from "./ui/hud.js";
-import { NPCManager } from "./world/npc.js";
-import { CITY_PLAN } from "./world/cityPlan.js";
+import { NPCManager, STATIONS } from "./world/npc.js";
+import { NavGrid } from "./world/navgrid.js";
 import { PetalField, SmokeField, LanternSway, MistLayers, SkyLanterns, WaterMotes } from "./core/particles.js";
 import { COLLISION_TEST_SOURCE } from "../tests/collision.test.mjs";
 import { ISLAND_ACCESS_TEST_SOURCE } from "../tests/island-access.test.mjs";
@@ -69,6 +69,8 @@ async function boot() {
   // 2. 世界生成
   const gen = new WorldGenerator(20261014);
   const world = gen.generate();
+  // NPC 导航网格（A* 寻路，让 NPC 绕过墙与建筑）
+  const nav = new NavGrid(world);
   hud0.set(0.55, "RAISING THE CITY...");
   await frame();
 
@@ -188,7 +190,40 @@ async function boot() {
   })();
 
   // 7.6 NPC：熊猫人主城的居民（巡逻 / 驻足 / 交谈 / 招手）
-  const npcs = new NPCManager(world, renderer.scene, CITY_PLAN.npcPaths, 32);
+  const npcs = new NPCManager(world, renderer.scene, nav, STATIONS, 70);
+
+  // 打招呼气泡：屏幕空间覆盖层（不做 3D sprite，避免被 bloom/体积光拉成光条）
+  const greetEl = document.createElement("div");
+  greetEl.style.cssText = "position:absolute;pointer-events:none;z-index:60;display:none;image-rendering:pixelated;";
+  document.body.appendChild(greetEl);
+  let _greetRole = null;
+  const _greetV = new THREE.Vector3();
+  function updateGreetingBubble(camera, playerPos) {
+    let best = null, bd = Infinity;
+    for (const a of npcs.agents) {
+      if (!a.greeting) continue;
+      const dx = a.pos.x - playerPos.x, dz = a.pos.z - playerPos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = a; }
+    }
+    if (!best) { greetEl.style.display = "none"; return; }
+    _greetV.set(best.pos.x, best.pos.y + 2.35 * best.def.scale, best.pos.z);
+    _greetV.project(camera);
+    if (_greetV.z > 1) { greetEl.style.display = "none"; return; }
+    const sx = (_greetV.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-_greetV.y * 0.5 + 0.5) * window.innerHeight;
+    const c = npcs.greetCanvases[best.role];
+    if (_greetRole !== best.role) {
+      _greetRole = best.role;
+      greetEl.innerHTML = "";
+      greetEl.appendChild(c);
+      greetEl.style.width = c.width + "px";
+      greetEl.style.height = c.height + "px";
+    }
+    greetEl.style.left = Math.round(sx - c.width / 2) + "px";
+    greetEl.style.top = Math.round(sy - c.height - 26) + "px";
+    greetEl.style.display = "block";
+  }
 
   // 7.7 环境粒子：飘落花瓣 / 竹叶 + 香炉烟雾 + 灯笼摇摆
   const petals = new PetalField(renderer.scene, 900, { range: 28 });
@@ -407,6 +442,7 @@ async function boot() {
 
     // NPC 更新
     npcs.update(dt, player.position);
+    updateGreetingBubble(renderer.camera, player.position);
 
     // 环境粒子
     petals.update(elapsed, player.position);
