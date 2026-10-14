@@ -15,6 +15,9 @@
 | 部署方式 | Workers Static Assets（`assets.directory`，无 `main` 入口） |
 | 路由 | 唯一一条 Custom Domain |
 | 保护 | Cloudflare Access（Zero Trust），复用组织级可复用策略 **Team-Only** |
+| Access 应用 | `JADEVEIL`（`self_hosted`，id `<ACCESS_APP_ID>`，session 24h） |
+| Worker 版本 | `0d69ddd2-7ed1-4771-93c7-a450445bb2bc`（2026-10-14 首次发布） |
+| 状态 | ✅ 已上线并验证：未登录 302 → Access 登录页；登录后可见游戏 |
 | Cloudflare 账号 | `<cloudflare-account-email>`（Account ID `<ACCOUNT_ID>`） |
 | Zone | `citrolabs.dev`（`vibe.citrolabs.dev` **不是**独立 zone，只是该 zone 下的主机名） |
 | Team 域 | `<team>.cloudflareaccess.com` |
@@ -93,6 +96,19 @@ npm run deploy
 - **会话时长**：24 小时（与其它内部站点一致）
 - **IdP**：OIDC SSO ＋ 邮箱 OTP（与其它内部站点一致）
 
+本次实际创建（2026-10-14，用带 `access:write` 的凭据走 API，只新增、不动既有 45 个应用）：
+
+```bash
+# 账户级可复用策略 Team-Only 直接按 id 挂在应用上（与 deb / keel / harness-book 完全同一条）
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/access/apps" \
+  --data '{"name":"JADEVEIL","domain":"jadeveil.vibe.citrolabs.dev","type":"self_hosted",
+           "session_duration":"24h","app_launcher_visible":true,"auto_redirect_to_identity":false,
+           "policies":[{"id":"<ACCESS_POLICY_ID>","precedence":1}]}'
+```
+
+创建前先查一次该主机名有没有已存在的应用（`/access/apps` 过滤 `jadeveil`），确保是新增而不是覆盖。
+
 ⚠️ **顺序很重要**：先建 Access 应用，再 `npm run deploy`。
 反过来会出现「域名已能打开、但还没被 Access 挡住」的公网空窗期。
 
@@ -118,6 +134,42 @@ curl -sI https://jadeveil.vibe.citrolabs.dev/ | head -5
 
 `curl` 拿到 **200 且返回游戏 HTML** 就说明 Access 没生效，要回到 §5 检查。
 
+### 本次实际验证结果（2026-10-14）
+
+① 未认证（`curl`，与 `<internal-site-a>` 基线完全一致）：
+
+```
+HTTP/2 302
+date: Wed, 14 Oct 2026 11:49:03 GMT
+content-type: text/html; charset=UTF-8
+location: https://<team>.cloudflareaccess.com/cdn-cgi/access/login/jadeveil.vibe.citrolabs.dev?kid=…&meta=…&redirect_url=%2F
+set-cookie: CF_AppSession=…; Expires=Thu, 15 Oct 2026 11:49:03 GMT; Path=/; Secure; HttpOnly
+www-authenticate: Cloudflare-Access resource_metadata="https://jadeveil.vibe.citrolabs.dev/.well-known/cloudflare-access-protected-resource/"
+server: cloudflare
+```
+
+返回体是 Cloudflare 的 302 页，**不是** JADEVEIL 的 HTML；对照组 `<internal-site-a>` 同样是 302。
+
+② 认证后（真实浏览器，OIDC SSO SSO 登录）：页面标题 `JADEVEIL — A Voxel Realm of Mist and Jade`，
+`window.__pandaria.stats()` 返回 `fps 12–14`、`chunks 136→149`、`tris ≈1.19M`、`npcs 32`，渲染循环持续出帧。
+游戏本体的入口遮罩写的是 **CLICK TO ENTER**（需要点击才能拿到 pointer lock），
+自动化里拿不到 pointer lock，所以截图用应用自带的 `__pandaria.heroView()` + `hideHud(false)`
+到达与点击后相同的渲染状态。
+
+### 三级域名的 TLS 注意点（`*.vibe.citrolabs.dev`）
+
+`citrolabs.dev` 是 **Free 计划**，Universal SSL 只覆盖 `citrolabs.dev` 与 `*.citrolabs.dev` 两层，
+**不覆盖** `jadeveil.vibe.citrolabs.dev` 这种三级主机名。
+Custom Domain 建好到证书签发完成之间，会看到：
+
+```
+curl: (35) LibreSSL ... sslv3 alert handshake failure
+```
+
+这是**正常的中间状态，不是配置错误**。本次大约 **2 分钟**后证书签发完成，再访问即 302。
+判断办法：`curl -sI` 报握手失败时先等 1–3 分钟再试，并对照 `https://<同一个 zone 下已有站点>/` 是否正常。
+如果长期不签发，再查 `zerotrust`/`ssl` 侧的证书状态。
+
 ---
 
 ## 7. 新增第二个作品时的清单
@@ -134,6 +186,8 @@ curl -sI https://jadeveil.vibe.citrolabs.dev/ | head -5
    浏览器登录后必须看到作品本体。
 7. 本地提交（**不建远程仓库、不 push**）。
 
+> 三级域名（`<作品名>.vibe.citrolabs.dev`）**首次访问前等 1–3 分钟**等证书签发，见 §6 末节。
+
 ---
 
 ## 8. 注意事项
@@ -145,3 +199,12 @@ curl -sI https://jadeveil.vibe.citrolabs.dev/ | head -5
   只做新增。
 - **本机环境备注**：`node` 需显式加进 PATH（`~/.nvm/versions/node/v24.11.0/bin`）；
   系统里没有 GNU `timeout`；`git` 用 `/opt/homebrew/bin/git`（`/usr/bin/git` 会撞上 Xcode 许可弹窗）。
+- **npm 装 wrangler 时 esbuild 被杀**：`npm install` 会报 `esbuild install.js ... SIGKILL`，
+  原因是 npm 新下载的二进制带了 `com.apple.quarantine`。
+  修复：`xattr -dr com.apple.quarantine node_modules`（或先 `npm install --ignore-scripts` 再解隔离）。
+- **拿带 `access:write` 的凭据（需要时）**：`cf auth login` 的本地回调只等 **120 秒**（硬编码），
+  人来点授权很容易超时。本次做法是用 **同一个 OAuth 客户端 / 同一组 scope** 起一个长驻回调服务
+ （写在 `/tmp/cf-oauth-long.mjs`，成功后按 CLI 自己的格式写回 `~/.cf/config.toml`，600 权限），
+  授权页仍然是用户本人在浏览器里确认。凭据只落在 `~/.cf/config.toml`，不进仓库、不进报告。
+- **零信任登录**：`<team>.cloudflareaccess.com` 的登录页支持 `OIDC SSO` 与邮箱验证码两种；
+  Lark SSO 会话还在时会一键入，否则需要本人完成登录/验证码。
