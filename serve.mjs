@@ -23,6 +23,10 @@ const MIME = {
   ".ico": "image/x-icon",
   ".wasm": "application/wasm",
   ".map": "application/json; charset=utf-8",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
 };
 
 const server = createServer(async (req, res) => {
