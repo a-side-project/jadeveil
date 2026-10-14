@@ -27,8 +27,16 @@ export class ChunkManager {
     this._cullTick = 0;
   }
 
+  /**
+   * 区块键：与 VoxelWorld 保持同一套数字键。
+   *
+   * 之前这里是字符串 key、而 world.dirty 是数字 key，
+   * 导致 cull() 用 decode() 解析字符串得到 NaN，
+   * 结果所有区块网格被判定为「不可见」——整个场景消失。
+   * 现在两边统一为数字键。
+   */
   key(cx, cz) {
-    return cx + "," + cz;
+    return VoxelWorld.key(cx, cz);
   }
 
   /** 生成/更新一个区块的网格。 */

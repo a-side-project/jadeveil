@@ -194,6 +194,39 @@ export const WORLDGUARD_TEST_SOURCE = `
     });
   }
 
+  // ---------- 6. 区块网格必须真的可见（回归：剔除键类型不匹配导致全场景消失） ----------
+  {
+    const p = P;
+    // 先正常刷新一次剔除
+    p.chunks.update(player.position, true);
+    p.chunks.cull(player.position);
+
+    let total = 0;
+    let visible = 0;
+    let tris = 0;
+    p.chunks.group.children.forEach((m) => {
+      total++;
+      if (m.visible) visible++;
+      if (m.geometry && m.geometry.index) tris += m.geometry.index.count / 3;
+    });
+
+    // 玩家脚下必定有区块；可见数必须 > 0 且占总数的大多数
+    const ratio = total ? visible / total : 0;
+    const pass = total > 0 && visible > 0 && ratio > 0.5 && tris > 10000;
+
+    results.push({
+      test: "Chunk meshes are actually visible (cull regression)",
+      detail: [{
+        totalMeshes: total,
+        visibleMeshes: visible,
+        visibleRatio: +ratio.toFixed(2),
+        trianglesRendered: Math.round(tris),
+        pass,
+      }],
+      pass,
+    });
+  }
+
   const failed = results.filter((r) => !r.pass);
   return {
     total: results.length,
