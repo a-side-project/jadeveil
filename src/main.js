@@ -406,7 +406,7 @@ async function boot() {
     audio.update(dt, st.night, player.headUnderwater);
 
     // NPC 更新
-    npcs.update(dt);
+    npcs.update(dt, player.position);
 
     // 环境粒子
     petals.update(elapsed, player.position);

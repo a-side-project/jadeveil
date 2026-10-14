@@ -114,7 +114,7 @@ export class AudioManager {
 
   _setupMusic() {
     const el = new Audio();
-    el.src = `${BASE}/music/theme_epic.ogg`;
+    el.src = `${BASE}/music/theme.ogg`;
     el.loop = true;
     el.preload = "auto";
     // 注意：不要设 crossOrigin。音乐与页面同源，设了会把请求变成 CORS 请求，

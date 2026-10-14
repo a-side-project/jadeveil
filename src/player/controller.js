@@ -497,10 +497,14 @@ export class Player {
     }
 
     // ---- 脚步声 ----
+    // 按「走过的距离」触发，而不是按时间 —— 步频才和实际行走节奏一致。
+    // 旧版用 horizSpeed*dt*1.9 累加、阈值 1，导致每秒 ~9 步，像机关枪。
+    // 步行约每 2.1 格一步、冲刺约每 2.6 格一步，听感自然。
     if (this.onGround && horizSpeed > 0.5) {
-      this._stepT += horizSpeed * dt * (this.sprinting ? 2.3 : 1.9);
-      if (this._stepT >= 1) {
-        this._stepT -= 1;
+      this._stepT += horizSpeed * dt;
+      const stepDist = this.sprinting ? 2.6 : 2.1;
+      if (this._stepT >= stepDist) {
+        this._stepT = 0;
         const below = this.world.get(
           Math.floor(this.position.x),
           Math.floor(this.position.y - EPS),

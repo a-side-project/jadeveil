@@ -398,9 +398,9 @@ feature/visual-impact     → 后续视觉优化分支
 放弃合成音色 —— 现在播放**真实录制的音频素材**（CC0 / CC-BY，详见 `audio/CREDITS.md`），
 全部打包进仓库、离线可用、零运行时外链。
 
-**背景音乐**：`audio/music/theme_epic.ogg` —— "The Final Battle"（skrjablin，CC0），
-约 2 分钟史诗管弦乐循环，经 `<audio>` + MediaElementSource 接入 Web Audio 图，
-走音乐总线（独立开关与音量）。
+**背景音乐**：`audio/music/theme.ogg` —— "Lotus Pond"（BiteMe Games，CC0），
+约 1 分钟古筝 / 竹笛 / 鼓的国风循环，贴合潘达利亚「雾与玉」的氛围，经
+`<audio>` + MediaElementSource 接入 Web Audio 图，走音乐总线（独立开关与音量）。
 
 **音效**（39 个文件，按材质/场景分类）：
 - 破坏/放置：石（挖矿音）、木、玻璃、金属、植物、土
@@ -617,3 +617,34 @@ window.__pandaria.runIslandAccessTests()
 | `08-rear-garden.png` | 后苑塔林 |
 | `09-sky-stair-day.png` | 浮岛登岛石阶（白天） |
 | `10-sky-stair-night.png` | 浮岛登岛石阶（夜晚灯笼） |
+
+---
+
+## 十五、体验打磨（脚步节奏与 NPC 智能）
+
+### 脚步音效节奏
+
+旧版用 `horizSpeed * dt * 1.9` 累加、阈值 1 触发，导致每秒约 9 步，像机关枪。
+现在按**走过的距离**触发：步行约每 2.1 格一步、冲刺约每 2.6 格一步，步频和
+真实行走节奏一致。
+
+### NPC 智能（工业级状态机 + 物理）
+
+旧版 NPC 只做「沿路径采样地面高度」，没有碰撞，会穿墙、上房顶、飘着走。
+
+重写后：
+
+- **真实物理**：重力 + 轴分离 AABB 碰撞（与玩家同款判定），不穿墙、不悬空、
+  可下台阶；落地精确贴地。
+- **有限状态机**：`patrol`（沿路径）→ `idle`（驻足）→ `wander`（游荡，撞墙自动
+  换方向）→ `greet`（玩家靠近时打招呼）。
+- **打招呼**：玩家进入 4.2 格范围时，NPC 停下、转身面向玩家、招手，并在头顶
+  弹出**像素字气泡**（深色圆角底 + 金边，按角色说不同的话：守卫 / 商人 / 武僧 /
+  孩童 / 武僧斗士 / 长者）；冷却 8 秒，不会反复打扰。
+- 渲染仍是 InstancedMesh 分部件（身体/头/四肢/帽），零额外 draw call 压力。
+
+验证：32 个 NPC 无一人穿墙（insideSolid=0）、全部贴地（32/32）、玩家靠近时
+正确进入 greet 并显示气泡；全量回归（quality/water/worldguard/collision/island）
+保持绿色。
+
+

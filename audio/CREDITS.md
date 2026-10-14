@@ -5,8 +5,10 @@ download time (2026-10-14). No external requests at runtime — every file ships
 inside this repo.
 
 ## Music
-- `music/theme_epic.ogg` — "The Final Battle" by skrjablin (OpenGameArt), **CC0**.
-  Epic orchestral loop, ~2 minutes. <https://opengameart.org/content/the-final-battle>
+- `music/theme.ogg` — "Lotus Pond" (loop) from **"Chinese Game Music"** by
+  BiteMe Games (itch.io), **CC0** (public domain, no attribution required).
+  Calm guzheng/flute/drum track, ~64s seamless loop.
+  <https://bitemegames.itch.io/chinese-game-music>
 
 ## Sound effects
 - `sfx/break_*`, `sfx/place_*`, `sfx/step_*`, `sfx/jump_*`, `sfx/land_*` —
