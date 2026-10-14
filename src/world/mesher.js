@@ -84,6 +84,9 @@ const AO_OFFSETS = [
 
 const AO_LEVELS = [0.42, 0.62, 0.82, 1.0];
 
+// 地下（无天空光）面的亮度因子：明显压暗但不全黑，让洞穴有“暗”感又能看清轮廓
+const SKY_DARK = 0.38;
+
 export class ChunkMesher {
   constructor(world, atlas) {
     this.world = world;
@@ -156,6 +159,22 @@ export class ChunkMesher {
       water: { pos: [], norm: [], uv: [], col: [], emi: [], idx: [] },
     };
 
+    // 预计算该区块及 1 格边界的“天空遮挡高度”：每列最顶上的不透明方块 y（无则 -1）。
+    // 用它判断某个面是否暴露在天空下——地下/洞穴里的面会被压暗，解决“光穿进地下”。
+    const S = CW + 2;
+    const skyTop = new Int16Array(S * S);
+    for (let j = 0; j < S; j++) {
+      for (let i = 0; i < S; i++) {
+        const wx = ox - 1 + i, wz = oz - 1 + j;
+        let top = -1;
+        for (let yy = CH - 1; yy >= 0; yy--) {
+          if (isOpaque(world.get(wx, yy, wz))) { top = yy; break; }
+        }
+        skyTop[j * S + i] = top;
+      }
+    }
+    const topAt = (wx, wz) => skyTop[(wz - (oz - 1)) * S + (wx - (ox - 1))];
+
     for (let y = 0; y < CH; y++) {
       for (let z = 0; z < CW; z++) {
         for (let x = 0; x < CW; x++) {
@@ -180,6 +199,14 @@ export class ChunkMesher {
             const shade = FACE_LIGHT[f];
             const emi = def.emissive || 0;
 
+            // 天空光：顶面看本列上方是否无遮挡；侧面看邻列在该高度及以上是否无遮挡；底面恒暗。
+            const fd = face.dir;
+            let skyExposed;
+            if (fd[1] === 1) skyExposed = topAt(ox + x, oz + z) < y + 1;
+            else if (fd[1] === -1) skyExposed = false;
+            else skyExposed = topAt(ox + x + fd[0], oz + z + fd[2]) < y;
+            const sky = skyExposed ? 1 : SKY_DARK;
+
             for (let k = 0; k < 4; k++) {
               const c = face.corners[k];
               bucket.pos.push(ox + x + c[0], y + c[1], oz + z + c[2]);
@@ -191,7 +218,7 @@ export class ChunkMesher {
               bucket.uv.push(uu, vv);
 
               const ao = this.aoLevel(ox + x, y, oz + z, f, k);
-              const l = shade * AO_LEVELS[ao];
+              const l = shade * AO_LEVELS[ao] * sky;
               bucket.col.push(l, l, l);
               bucket.emi.push(emi);
             }

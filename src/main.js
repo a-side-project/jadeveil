@@ -226,7 +226,7 @@ async function boot() {
   }
 
   // 7.7 环境粒子：飘落花瓣 / 竹叶 + 香炉烟雾 + 灯笼摇摆
-  const petals = new PetalField(renderer.scene, 900, { range: 28 });
+  const petals = new PetalField(renderer.scene, 900, { range: 28, world });
   const smokeSources = [];
   for (const lm of gen.landmarks) {
     if (lm.type === "lantern" && smokeSources.length < 14) {
@@ -386,6 +386,7 @@ async function boot() {
       sprinting: player.sprinting,
       flying: player.flying,
       yaw: player.yaw,
+      pitch: player.pitch,
     });
 
     // 区块流式加载
@@ -445,7 +446,7 @@ async function boot() {
     updateGreetingBubble(renderer.camera, player.position);
 
     // 环境粒子
-    petals.update(elapsed, player.position);
+    petals.update(elapsed, player.position, dt);
     smoke.update(elapsed);
     lanternSway.update(elapsed);
     mist.update(elapsed, renderer.camera, st.night);

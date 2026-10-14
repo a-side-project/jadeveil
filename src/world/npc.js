@@ -9,7 +9,7 @@
  *  · 状态机：idle / travel / station / greet（玩家靠近时停下、转身、招手）
  */
 import * as THREE from "three";
-import { isSolid } from "./blocks.js";
+import { isSolid, isLiquid } from "./blocks.js";
 import { renderText } from "../ui/pixelfont.js";
 
 export const NPC_ROLES = {
@@ -157,8 +157,14 @@ class Agent {
   _move(dt, dirX, dirZ, speed) {
     const p = this.pos;
     this.blocked = false;
-    const dx = dirX * speed * dt;
-    const dz = dirZ * speed * dt;
+
+    // 水体检测：躯干在水里算游泳，只有脚踝沾水算涉水
+    const midWater = isLiquid(this.world.get(Math.floor(p.x), Math.floor(p.y + 0.85), Math.floor(p.z)));
+    const feetWater = isLiquid(this.world.get(Math.floor(p.x), Math.floor(p.y + 0.1), Math.floor(p.z)));
+    const spd = midWater ? speed * 0.45 : (feetWater ? speed * 0.65 : speed);
+
+    const dx = dirX * spd * dt;
+    const dz = dirZ * spd * dt;
     if (dx !== 0) {
       p.x += dx;
       if (this.collides(p.x, p.y, p.z)) { p.x -= dx; this.blocked = true; }
@@ -167,7 +173,13 @@ class Agent {
       p.z += dz;
       if (this.collides(p.x, p.y, p.z)) { p.z -= dz; this.blocked = true; }
     }
-    this.vy -= GRAVITY * dt;
+
+    // 垂直：水里上浮（游泳），陆地走重力
+    if (midWater) {
+      this.vy += (2.0 - this.vy) * Math.min(1, dt * 3.5);
+    } else {
+      this.vy -= GRAVITY * dt;
+    }
     if (this.vy < -MAX_FALL) this.vy = -MAX_FALL;
     p.y += this.vy * dt;
     if (this.collides(p.x, p.y, p.z)) {

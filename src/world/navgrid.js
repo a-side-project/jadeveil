@@ -4,7 +4,7 @@
  * 把世界按 2 格一单元栅格化，标记「可走 / 不可走」，供 NPC 寻路绕过墙与建筑。
  * 只用一次建图（世界生成后），寻路是纯栅格 A*，速度够 100+ NPC 低频重寻路。
  */
-import { isSolid } from "./blocks.js";
+import { isSolid, isLiquid } from "./blocks.js";
 
 /** 极小二叉堆，用于 A* 开放表。 */
 class MinHeap {
@@ -83,7 +83,8 @@ export class NavGrid {
         // 城市基准面 baseY=34，城墙约 12 格高（顶~46），浮岛更高。
         if (gy >= 24 && gy <= 44) {
           const bodyY = gy + 1;
-          ok = !isSolid(w.get(gx, bodyY, gz)) && !isSolid(w.get(gx, bodyY + 1, gz));
+          const b = w.get(gx, bodyY, gz);
+          ok = !isSolid(b) && !isLiquid(b) && !isSolid(w.get(gx, bodyY + 1, gz));
         }
         this.walkable[this.idx(i, j)] = ok ? 1 : 0;
       }

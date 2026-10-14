@@ -13,6 +13,7 @@ import * as THREE from "three";
 const WHITE = 0xf3f1ea; // 熊猫白
 const BLACK = 0x282a2f; // 熊猫黑
 const JADE = 0x54b795; // 玉带
+const WING = 0xdceef0; // 灵羽（飞行翅膀）
 const DARK = 0x1e2024;
 
 const mat = (color, rough = 0.74) =>
@@ -116,6 +117,19 @@ export class Avatar {
       pivot.add(leg);
       this.legs.push(pivot);
     }
+
+    // 翅膀：飞行时显示并扇动（幻想元素）
+    this.wings = [];
+    for (const s of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(s * 0.40, 0.58, -0.28);
+      body.add(pivot);
+      const wing = part(0.06, 0.50, 1.15, WING, 0.5);
+      wing.position.z = -0.55;
+      wing.visible = false;
+      pivot.add(wing);
+      this.wings.push(pivot);
+    }
   }
 
   /* ---------------- 第一人称手部 ---------------- */
@@ -163,8 +177,9 @@ export class Avatar {
     // ---------- 整体朝向 ----------
     this.group.rotation.y = s.yaw;
 
-    // 游泳时身体放平；飞行时略微前倾
-    const targetPitch = swim * -1.30 + this._fly * -0.22;
+    // 游泳时身体放平；飞行时前倾并随俯仰/速度起伏
+    const flyPitch = s.pitch ? s.pitch * 0.5 : 0;
+    const targetPitch = swim * -1.30 + this._fly * (-0.22 + flyPitch);
     this.body.rotation.x = damp(this.body.rotation.x, targetPitch, 7, dt);
 
     // ---------- 手臂 ----------
@@ -191,12 +206,24 @@ export class Avatar {
     legL.rotation.x = damp(legL.rotation.x, lerp(gait * 0.78, kick * 0.42, swim), 9, dt);
     legR.rotation.x = damp(legR.rotation.x, lerp(-gait * 0.78, -kick * 0.42, swim), 9, dt);
 
+    // ---------- 翅膀 ----------
+    const flying = this._fly > 0.02;
+    for (const w of this.wings) w.visible = flying;
+    if (flying) {
+      const flap = Math.sin(t * 34) * 0.55;
+      this.wings[0].rotation.x = -0.45 + flap;
+      this.wings[1].rotation.x = -0.45 - flap;
+      this.wings[0].rotation.z = 0.35 - flap * 0.15;
+      this.wings[1].rotation.z = -0.35 + flap * 0.15;
+    }
+
     // ---------- 头部与躯干 ----------
     // 抬头换气：游泳时头略抬，避免整张脸埋进水里
     this.head.rotation.x = damp(this.head.rotation.x, swim * 0.55, 7, dt);
-    // 呼吸起伏
+    // 呼吸起伏 + 飞行微浮
     const breathe = gait2 * (moving && s.onGround ? 0.02 : 0.012);
-    this.body.position.y = 0.72 + breathe + swim * 0.06;
+    const flyBob = this._fly * Math.sin(t * 12) * 0.03;
+    this.body.position.y = 0.72 + breathe + swim * 0.06 + flyBob;
 
     // ---------- 第一人称手部 ----------
     // 只在「第一人称 + 水中」出现：平时不挡视线，第三人称/观察模式一律隐藏。

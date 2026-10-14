@@ -8,39 +8,27 @@
  * 全部用 Points + 顶点着色器驱动，避免每帧新建对象。
  */
 import * as THREE from "three";
+import { isLiquid } from "../world/blocks.js";
 
 /* ---------------- 花瓣 / 竹叶 ---------------- */
 
 const PETAL_VERT = /* glsl */ `
-  attribute float aPhase;
-  attribute float aSpeed;
   attribute float aSize;
   attribute vec3 aColor;
+  attribute float aAlpha;
   uniform float uTime;
-  uniform vec3 uOrigin;
-  uniform float uRange;
   varying vec3 vColor;
   varying float vAlpha;
-
   void main() {
     vColor = aColor;
-    float t = mod(uTime * aSpeed + aPhase * 37.0, 1.0);
-    float y = uOrigin.y + uRange * (1.0 - t * 2.0);
-    float sway = sin(uTime * 1.3 + aPhase * 12.0) * 1.6;
-    float drift = cos(uTime * 0.7 + aPhase * 8.0) * 1.2;
-    vec3 pos = vec3(
-      uOrigin.x + position.x + sway,
-      y,
-      uOrigin.z + position.z + drift
-    );
-    float ang = uTime * 1.8 + aPhase * 20.0;
-    pos.x += cos(ang) * 0.12;
-    pos.z += sin(ang) * 0.12;
-
+    vec3 pos = position;
+    float ang = uTime * 1.8 + pos.y * 0.35;
+    pos.x += cos(ang) * 0.1;
+    pos.z += sin(ang) * 0.1;
     vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mv;
     gl_PointSize = aSize * 300.0 / max(-mv.z, 1.0);
-    vAlpha = smoothstep(0.0, 0.12, t) * (1.0 - smoothstep(0.82, 1.0, t));
+    vAlpha = aAlpha;
   }
 `;
 
@@ -61,14 +49,18 @@ export class PetalField {
   constructor(scene, count = 900, opts = {}) {
     this.count = count;
     this.range = opts.range ?? 26;
+    this.world = opts.world;
 
-    const geo = new THREE.BufferGeometry();
+    this.px = new Float32Array(count);
+    this.py = new Float32Array(count);
+    this.pz = new Float32Array(count);
+    this.phase = new Float32Array(count);
+    this.fall = new Float32Array(count);
+    this.alpha = new Float32Array(count);
+
     const pos = new Float32Array(count * 3);
-    const phase = new Float32Array(count);
-    const speed = new Float32Array(count);
     const size = new Float32Array(count);
     const color = new Float32Array(count * 3);
-
     const palette = opts.palette || [
       [0.95, 0.62, 0.72],
       [0.98, 0.78, 0.84],
@@ -78,13 +70,9 @@ export class PetalField {
     ];
 
     for (let i = 0; i < count; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = Math.sqrt(Math.random()) * this.range;
-      pos[i * 3] = Math.cos(a) * r;
-      pos[i * 3 + 1] = 0;
-      pos[i * 3 + 2] = Math.sin(a) * r;
-      phase[i] = Math.random();
-      speed[i] = 0.035 + Math.random() * 0.05;
+      this.phase[i] = Math.random() * Math.PI * 2;
+      this.fall[i] = 0.4 + Math.random() * 0.5;
+      this.alpha[i] = 0;
       size[i] = 0.5 + Math.random() * 0.9;
       const c = palette[(Math.random() * palette.length) | 0];
       color[i * 3] = c[0];
@@ -92,18 +80,16 @@ export class PetalField {
       color[i * 3 + 2] = c[2];
     }
 
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
-    geo.setAttribute("aSpeed", new THREE.BufferAttribute(speed, 1));
+    this.posAttr = new THREE.BufferAttribute(pos, 3);
+    this.alphaAttr = new THREE.BufferAttribute(this.alpha, 1);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", this.posAttr);
     geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
     geo.setAttribute("aColor", new THREE.BufferAttribute(color, 3));
+    geo.setAttribute("aAlpha", this.alphaAttr);
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
-    this.uniforms = {
-      uTime: { value: 0 },
-      uOrigin: { value: new THREE.Vector3(0, 40, 0) },
-      uRange: { value: 22 },
-    };
-
+    this.uniforms = { uTime: { value: 0 } };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
       vertexShader: PETAL_VERT,
@@ -116,11 +102,59 @@ export class PetalField {
     this.points.frustumCulled = false;
     this.points.renderOrder = 4;
     scene.add(this.points);
+
+    for (let i = 0; i < count; i++) this._respawn(i, 0, 34, 0);
   }
 
-  update(elapsed, playerPos) {
-    this.uniforms.uTime.value = elapsed;
-    this.uniforms.uOrigin.value.set(playerPos.x, playerPos.y + 6, playerPos.z);
+  _respawn(i, ox, oy, oz) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * this.range;
+    this.px[i] = ox + Math.cos(a) * r;
+    this.pz[i] = oz + Math.sin(a) * r;
+    this.py[i] = oy + 9 + Math.random() * 12;
+    this.alpha[i] = 0;
+    this.phase[i] = Math.random() * Math.PI * 2;
+  }
+
+  /** 每帧 CPU 模拟：下落 + 摆；落地即淡出、遇水即融化，都重生回高空。 */
+  update(elapsed, playerPos, dt) {
+    dt = Math.min(dt || 0.016, 0.05);
+    const ox = playerPos.x, oy = playerPos.y, oz = playerPos.z;
+    const w = this.world;
+    const t = elapsed;
+
+    for (let i = 0; i < this.count; i++) {
+      this.alpha[i] = Math.min(1, this.alpha[i] + dt * 1.4);
+
+      this.py[i] -= this.fall[i] * dt;
+      this.px[i] += Math.sin(t * 0.9 + this.phase[i]) * 0.35 * dt;
+      this.pz[i] += Math.cos(t * 0.7 + this.phase[i] * 1.3) * 0.35 * dt;
+
+      const wx = this.px[i], wy = this.py[i], wz = this.pz[i];
+      const gx = Math.round(wx), gz = Math.round(wz);
+
+      const gy = w.groundHeight(gx, gz);
+      if (gy >= 0 && wy <= gy + 0.05) {
+        this.py[i] = gy + 0.05;
+        this.alpha[i] -= dt * 2.2;
+      } else {
+        const id = w.get(gx, Math.floor(wy), gz);
+        if (isLiquid(id)) this.alpha[i] -= dt * 1.8;
+      }
+
+      const dx = wx - ox, dz = wz - oz;
+      if (this.alpha[i] <= 0 || dx * dx + dz * dz > (this.range * 1.6) ** 2) {
+        this._respawn(i, ox, oy, oz);
+      }
+
+      this.posAttr.array[i * 3] = this.px[i];
+      this.posAttr.array[i * 3 + 1] = this.py[i];
+      this.posAttr.array[i * 3 + 2] = this.pz[i];
+      this.alphaAttr.array[i] = this.alpha[i];
+    }
+    this.posAttr.needsUpdate = true;
+    this.alphaAttr.needsUpdate = true;
+    this.uniforms.uTime.value = t;
   }
 }
 
