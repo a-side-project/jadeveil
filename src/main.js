@@ -69,6 +69,8 @@ async function boot() {
   daynight.sample(daynight.time);
   renderer.setSunDir(daynight.state.sunDir);
   renderer.applyDayNight(daynight.state, sky);
+  // 平面反射：水面高度用荷花池水面（城台顶面）
+  renderer.initReflection(CITY.baseY + 1);
 
   // 4. 区块网格
   const chunks = new ChunkManager(world, atlas, renderer, {

@@ -354,14 +354,101 @@ export class Renderer {
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
     this.bloom.resolution.set(w, h);
+    if (this.reflectRT) {
+      this.reflectRT.setSize(
+        Math.max(2, Math.floor(w * 0.5)),
+        Math.max(2, Math.floor(h * 0.5)),
+      );
+    }
   }
 
   render() {
+    this.renderReflection();
     this.composer.render();
   }
 
   /** 推进水面动画时间。 */
   tick(elapsed) {
     if (this.waterUniforms) this.waterUniforms.uTime.value = elapsed;
+  }
+
+  /* ================= 平面反射 ================= */
+
+  /**
+   * 水面平面反射：把场景以镜面相机渲染到一张 RT，供水着色器采样。
+   *
+   *  1. 镜面相机关于水面（y = waterLevel）镜像
+   *  2. 隐藏水面材质，避免自反射反馈
+   *  3. 计算 textureMatrix，把世界坐标映射到反射图 UV
+   */
+  renderReflection() {
+    if (!this.reflectRT) return;
+    const cam = this.camera;
+    const L = this.waterLevel;
+
+    // 只在相机高于水面时反射（水下不渲染反射，省开销）
+    if (cam.position.y < L - 1) {
+      this.matWater.visible = false;
+      return;
+    }
+
+    const rc = this.reflectCam;
+    rc.far = cam.far;
+    rc.near = cam.near;
+
+    // 位置镜像
+    const cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
+    rc.position.set(cx, 2 * L - cy, cz);
+
+    // 朝向镜像
+    const look = this._reflLook;
+    cam.getWorldDirection(look);
+    const tx = cx + look.x, ty = cy + look.y, tz = cz + look.z;
+    rc.up.set(0, -1, 0);
+    rc.lookAt(tx, 2 * L - ty, tz);
+
+    rc.updateMatrixWorld();
+    rc.projectionMatrix.copy(cam.projectionMatrix);
+    rc.projectionMatrixInverse.copy(cam.projectionMatrixInverse);
+
+    // 纹理矩阵：世界坐标 → 反射图 UV
+    const tm = this.waterUniforms.uReflectMatrix.value;
+    tm.set(
+      0.5, 0.0, 0.0, 0.5,
+      0.0, 0.5, 0.0, 0.5,
+      0.0, 0.0, 0.5, 0.5,
+      0.0, 0.0, 0.0, 1.0,
+    );
+    tm.multiply(rc.projectionMatrix);
+    tm.multiply(rc.matrixWorldInverse);
+
+    // 渲染（隐藏水面，避免反馈）
+    this.matWater.visible = false;
+    const prevRT = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(this.reflectRT);
+    this.renderer.clear();
+    this.renderer.render(this.scene, rc);
+    this.renderer.setRenderTarget(prevRT);
+    this.matWater.visible = true;
+  }
+
+  /** 初始化反射用的渲染目标与镜面相机。 */
+  initReflection(waterLevel = 35) {
+    this.waterLevel = waterLevel;
+    this._reflLook = new THREE.Vector3();
+    const w = Math.max(2, Math.floor(window.innerWidth * 0.5));
+    const h = Math.max(2, Math.floor(window.innerHeight * 0.5));
+    this.reflectRT = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      type: THREE.HalfFloatType,
+    });
+    this.reflectCam = new THREE.PerspectiveCamera();
+    this.reflectCam.layers.enableAll();
+
+    if (this.waterUniforms) {
+      this.waterUniforms.uReflection.value = this.reflectRT.texture;
+      this.waterUniforms.uWaterLevel.value = waterLevel;
+    }
   }
 }

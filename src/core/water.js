@@ -23,6 +23,11 @@ export const WaterShader = {
     uNight: { value: 0 },
     uOpacity: { value: 0.86 },
     uWaveScale: { value: 1.0 },
+    // ---- 平面反射 ----
+    uReflection: { value: null },
+    uReflectMatrix: { value: new THREE.Matrix4() },
+    uReflectStrength: { value: 0.82 },
+    uWaterLevel: { value: 35.0 },
   },
 
   vertexShader: /* glsl */ `
@@ -91,6 +96,10 @@ export const WaterShader = {
     uniform vec3 uSkyColor;
     uniform float uNight;
     uniform float uOpacity;
+    uniform sampler2D uReflection;
+    uniform mat4 uReflectMatrix;
+    uniform float uReflectStrength;
+    uniform float uWaterLevel;
 
     varying vec3 vWorldPos;
     varying vec3 vNormal;
@@ -127,34 +136,54 @@ export const WaterShader = {
       float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
       fres = clamp(fres, 0.02, 1.0);
 
-      // 深浅水：用波纹高度与到相机距离近似水深
-      float depthT = clamp(vWaveHeight * 1.6 + 0.5, 0.0, 1.0);
-      vec3 waterCol = mix(uDeep, uShallow, depthT);
+      // 真实水深（水面到水底的垂直距离）
+      float depth = max(0.0, uWaterLevel - vWorldPos.y);
 
-      // 天空反射色（随昼夜）
-      vec3 skyRefl = mix(uSkyColor, vec3(0.06, 0.09, 0.20), uNight);
+      // 深度吸收：越深越暗越偏青，不是简单的双向插值
+      vec3 waterCol = mix(uShallow, uDeep, clamp(depth * 1.6, 0.0, 1.0));
+
+      // ---------- 平面反射：采样镜像渲染结果 ----------
+      vec3 reflCol = mix(uSkyColor, vec3(0.06, 0.09, 0.20), uNight);
+      vec4 rUv = uReflectMatrix * vec4(vWorldPos, 1.0);
+      if (rUv.w > 0.0) {
+        vec2 uv = rUv.xy / rUv.w;
+        if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
+          // 用法线扰动 UV，得到随波起伏的真实倒影
+          vec2 off = vec2(N.x, N.z) * 0.030 / (1.0 + dist * 0.02);
+          vec3 sampled = texture2D(uReflection, clamp(uv + off, 0.001, 0.999)).rgb;
+          reflCol = mix(reflCol, sampled, uReflectStrength);
+        }
+      }
+
+      // ---------- 水下焦散：波纹聚光 ----------
+      float caustic = fbm(vWorldPos.xz * 1.9 + vec2(uTime * 0.28, -uTime * 0.19));
+      caustic = pow(smoothstep(0.52, 0.96, caustic), 2.0);
 
       // 太阳高光
       vec3 H = normalize(normalize(uSunDir) + V);
       float spec = pow(max(dot(N, H), 0.0), 220.0);
       float specWide = pow(max(dot(N, H), 0.0), 24.0) * 0.25;
 
-      vec3 col = mix(waterCol, skyRefl, fres * 0.85);
+      vec3 col = mix(waterCol, reflCol, fres);
+      col += uSunColor * caustic * 0.14 * (1.0 - uNight * 0.8);
       col += uSunColor * (spec + specWide) * (1.0 - uNight * 0.75);
 
-      // 岸边泡沫：用噪声 + 波纹高度做浅滩白沫
+      // 岸边泡沫：只在浅水出现
       float foamNoise = fbm(vWorldPos.xz * 1.6 + uTime * 0.15);
-      float foam = smoothstep(0.62, 0.92, foamNoise + vWaveHeight * 2.2);
-      col = mix(col, uFoam, foam * 0.55 * (1.0 - uNight * 0.5));
+      float foam = smoothstep(0.62, 0.92, foamNoise + vWaveHeight * 2.2)
+                 * smoothstep(3.5, 0.15, depth);
+      col = mix(col, uFoam, foam * 0.6 * (1.0 - uNight * 0.5));
 
       // 视角透明度：掠射更不透明，俯视更透明
       float alpha = mix(uOpacity, 0.97, fres);
       alpha = mix(alpha, 0.55, smoothstep(0.0, 6.0, dist) * 0.0);
 
-      // 水下视角色偏（相机在水面之下）
-      if (cameraPosition.y < vWorldPos.y) {
-        col = mix(col, vec3(0.10, 0.28, 0.34), 0.55);
-        col *= 0.85;
+      // 水下视角：色偏 + 深度吸收 + 体积雾
+      if (cameraPosition.y < uWaterLevel) {
+        float sub = uWaterLevel - cameraPosition.y;
+        col = mix(col, vec3(0.10, 0.30, 0.36), 0.5);
+        col *= exp(-sub * 0.030);
+        col += uSunColor * caustic * 0.12;
         alpha = 0.92;
       }
 
