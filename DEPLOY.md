@@ -16,7 +16,7 @@
 | 路由 | 唯一一条 Custom Domain |
 | 保护 | Cloudflare Access（Zero Trust），复用组织级可复用策略 **Team-Only** |
 | Access 应用 | `JADEVEIL`（`self_hosted`，id `<ACCESS_APP_ID>`，session 24h） |
-| Worker 版本 | `0d69ddd2-7ed1-4771-93c7-a450445bb2bc`（2026-10-14 首次发布） |
+| Worker 版本 | `eb814703-dede-4177-82e7-324e35250873`（2026-10-14 修复版本；首次发布 `0d69ddd2`） |
 | 状态 | ✅ 已上线并验证：未登录 302 → Access 登录页；登录后可见游戏 |
 | Cloudflare 账号 | `<cloudflare-account-email>`（Account ID `<ACCOUNT_ID>`） |
 | Zone | `citrolabs.dev`（`vibe.citrolabs.dev` **不是**独立 zone，只是该 zone 下的主机名） |
