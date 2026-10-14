@@ -35,6 +35,7 @@ export class Avatar {
     this._swim = 0; // 游泳程度 0..1（平滑）
     this._fly = 0;
     this._pose = 0; // 迈步相位
+    this._fp = true; // 是否第一人称（决定手部视模型是否可见）
 
     this.group = new THREE.Group();
     this.group.name = "avatar";
@@ -198,8 +199,9 @@ export class Avatar {
     this.body.position.y = 0.72 + breathe + swim * 0.06;
 
     // ---------- 第一人称手部 ----------
-    // 只在水中出现：平时不挡视线，入水才摆出划水姿势
-    const showArms = swim > 0.02;
+    // 只在「第一人称 + 水中」出现：平时不挡视线，第三人称/观察模式一律隐藏。
+    // （否则 V 切换到全身视角时，这双手还会悬在屏幕上。）
+    const showArms = this._fp && swim > 0.02;
     this.viewArms.visible = showArms;
     if (showArms) {
       for (let i = 0; i < 2; i++) {
@@ -216,10 +218,9 @@ export class Avatar {
 
   /** 第一人称隐藏全身、显示手部；其余模式相反。 */
   setMode(mode) {
-    const fp = mode === "first";
-    this.group.visible = !fp;
-    // viewArms 的可见性由 update() 按是否入水决定
-    if (fp) this.viewArms.visible = false;
+    this._fp = mode === "first";
+    this.group.visible = !this._fp;
+    // viewArms 的可见性由 update() 每帧按「第一人称 + 入水」决定
   }
 
   /** 把全身模型放到玩家位置（脚底对齐）。 */

@@ -155,6 +155,7 @@ export class Interaction {
       return false;
     }
     this.world.set(hit.x, hit.y, hit.z, AIR);
+    if (this.onBreak) this.onBreak(hit.id, hit.x, hit.y, hit.z);
     return true;
   }
 
@@ -169,7 +170,9 @@ export class Interaction {
     // 双保险：不可破坏方块不可被覆盖
     if (isUnbreakable(cur)) return false;
 
-    // 不能把方块放进玩家身体里（用与碰撞一致的 AABB）
+    // 不能把方块放进玩家身体里（用与碰撞一致的 AABB）。
+    // 例外（Minecraft 行为）：如果恰好是「脚所在的那一格」，允许放置，
+    // 并把玩家顶到新方块顶上 —— 这样能给自己脚下垫方块、一级级往上爬。
     const p = this.player.position;
     const def = blockDef(this.selected);
     if (def.solid) {
@@ -177,9 +180,20 @@ export class Interaction {
       const overlapX = x + 1 > p.x - w && x < p.x + w;
       const overlapZ = z + 1 > p.z - w && z < p.z + w;
       const overlapY = y + 1 > p.y && y < p.y + PLAYER_H;
-      if (overlapX && overlapY && overlapZ) return false;
+      if (overlapX && overlapY && overlapZ) {
+        if (y === Math.floor(p.y)) {
+          this.world.set(x, y, z, this.selected);
+          this.player.position.y = y + 1;
+          if (this.player.velocity.y < 0) this.player.velocity.y = 0;
+          this.player.onGround = true;
+          if (this.onPlace) this.onPlace(this.selected, x, y, z);
+          return true;
+        }
+        return false; // 身体/头部被占据，拒绝
+      }
     }
     this.world.set(x, y, z, this.selected);
+    if (this.onPlace) this.onPlace(this.selected, x, y, z);
     return true;
   }
 }

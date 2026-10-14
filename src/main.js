@@ -23,6 +23,8 @@ import { installPixelUI } from "./ui/pixelui.js";
 import { attachPixelText } from "./ui/pixelfont.js";
 import { WORLDGUARD_TEST_SOURCE } from "../tests/worldguard.test.mjs";
 import { WATER_TEST_SOURCE } from "../tests/water.test.mjs";
+import { QUALITY_TEST_SOURCE } from "../tests/quality.test.mjs";
+import { AudioManager } from "./audio/audioManager.js";
 
 // 像素风界面必须在任何内容渲染前装好（含加载页）
 installPixelUI();
@@ -103,6 +105,31 @@ async function boot() {
   const interaction = new Interaction(world, renderer.camera, player, renderer.scene);
   // 7. HUD
   const hud = new HUD(atlas, player, daynight, interaction, world);
+
+  // 7.5 音频 —— 全部由 Web Audio 实时合成，首次用户手势后启动
+  const audio = new AudioManager();
+  hud.audio = audio;
+  hud.syncAudioSettings();
+  const beginAudio = () => {
+    audio.begin();
+    window.removeEventListener("pointerdown", beginAudio);
+    window.removeEventListener("keydown", beginAudio);
+  };
+  window.addEventListener("pointerdown", beginAudio);
+  window.addEventListener("keydown", beginAudio);
+
+  // 玩家音频事件
+  player.onJump = () => audio.jump();
+  player.onLand = (fall) => audio.land(fall);
+  player.onFootstep = (surface, running) => audio.footstep(surface, running);
+  player.onSplash = (kind) => {
+    if (kind === "enter" || kind === "exit") audio.splash(kind);
+    else if (kind === "dive") audio.bubble();
+  };
+  player.onSwimStroke = () => audio.swimStroke();
+  // 交互音频事件
+  interaction.onBreak = (id) => audio.breakBlock(BLOCKS[id] ? BLOCKS[id].name : "");
+  interaction.onPlace = (id) => audio.placeBlock(BLOCKS[id] ? BLOCKS[id].name : "");
   player.onLockChange = (locked) => {
     hud.setLocked(locked);
     hud.setPaused(!locked);
@@ -193,7 +220,10 @@ async function boot() {
     voidFade.classList.add("on");
     setTimeout(() => voidFade.classList.remove("on"), 420);
   };
-  interaction.onBlocked = (msg) => hud.showItemName(msg);
+  interaction.onBlocked = (msg) => {
+    hud.showItemName(msg);
+    audio.blocked();
+  };
 
   // 开场遮罩点击进入（先放一段 cinematic 巡游，再交还给玩家）
   document.getElementById("overlay").addEventListener("click", () => {
@@ -372,6 +402,9 @@ async function boot() {
     // 水下氛围（雾色/雾距/曝光），必须在 applyDayNight 之后、render 之前
     renderer.updateWaterView(dt);
 
+    // 音频：水下滤波 + 音乐昼夜
+    audio.update(dt, st.night, player.headUnderwater);
+
     // NPC 更新
     npcs.update(dt);
 
@@ -417,6 +450,7 @@ async function boot() {
     chunks,
     player,
     avatar,
+    audio,
     daynight,
     interaction,
     hud,
@@ -509,6 +543,11 @@ async function boot() {
     runWaterTests() {
       // eslint-disable-next-line no-eval
       return eval(WATER_TEST_SOURCE);
+    },
+    /** 运行交互 / 化身质量回归测试。 */
+    runQualityTests() {
+      // eslint-disable-next-line no-eval
+      return eval(QUALITY_TEST_SOURCE);
     },
   };
   app.ready = true;

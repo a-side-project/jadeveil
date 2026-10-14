@@ -46,6 +46,7 @@ export class HUD {
     this.slotIndex = 0;
     this.hidden = false;
     this._nameTimer = 0;
+    this.audio = null; // 由 main.js 注入，用于 UI 音效
     this.speeds = [1, 4, 12, 40];
     this.speedIndex = 0;
 
@@ -76,6 +77,8 @@ export class HUD {
       clock: attachPixelText(document.getElementById("t-clock"), { color: C.gold, scale: 2, initial: "06:00" }),
       sens: attachPixelText(document.getElementById("v-sens"), { color: C.gold, scale: 1, initial: "1.0" }),
       fov: attachPixelText(document.getElementById("v-fov"), { color: C.gold, scale: 1, initial: "72" }),
+      musicvol: attachPixelText(document.getElementById("v-musicvol"), { color: C.gold, scale: 1, initial: "80%" }),
+      sfxvol: attachPixelText(document.getElementById("v-sfxvol"), { color: C.gold, scale: 1, initial: "100%" }),
       chunkprog: attachPixelText(document.getElementById("chunkprog"), { color: C.jade, scale: 1, initial: "" }),
       itemname: attachPixelText(document.getElementById("itemname"), { color: C.gold, scale: 2, initial: "" }),
       loadmsg: attachPixelText(document.getElementById("loadmsg"), { color: C.jade, scale: 1, initial: "PREPARING..." }),
@@ -103,6 +106,11 @@ export class HUD {
     say("l-bob", "HEAD BOB", { scale: 1 });
     say("l-shadow", "SHADOWS", { scale: 1 });
     say("l-bloom", "BLOOM", { scale: 1 });
+    say("l-audio", "AUDIO", { color: C.gold, scale: 1 });
+    say("l-musicvol", "MUSIC VOLUME", { scale: 1 });
+    say("l-sfxvol", "SFX VOLUME", { scale: 1 });
+    say("l-music", "MUSIC", { scale: 1 });
+    say("l-sfx", "SOUND FX", { scale: 1 });
     document.querySelector('#settings .tiers button[data-q="high"]')?.classList.add("on");
 
     // 小地图
@@ -177,7 +185,10 @@ export class HUD {
     this.slots.forEach((s, k) => s.classList.toggle("active", k === this.slotIndex));
     const id = ID[HOTBAR[this.slotIndex]];
     this.interaction.selected = id;
-    if (!silent) this.showItemName(blockDef(id).label);
+    if (!silent) {
+      this.showItemName(blockDef(id).label);
+      this.audio?.uiSelect();
+    }
   }
 
   showItemName(text) {
@@ -199,16 +210,19 @@ export class HUD {
       btn.addEventListener("click", () => {
         dn.time = Number(btn.dataset.time);
         this.el.slider.value = String(dn.time);
+        this.audio?.uiClick();
       });
     });
     this.btnCycle.addEventListener("click", () => {
       dn.playing = !dn.playing;
       this._refreshTimeButtons();
+      this.audio?.uiClick();
     });
     this.btnSpeed.addEventListener("click", () => {
       this.speedIndex = (this.speedIndex + 1) % this.speeds.length;
       dn.speed = this.speeds[this.speedIndex];
       this._refreshTimeButtons();
+      this.audio?.uiClick();
     });
   }
 
@@ -221,6 +235,7 @@ export class HUD {
         btn.classList.add("on");
         if (this.onQuality) this.onQuality(btn.dataset.q);
         this.showItemName(`QUALITY ${btn.dataset.q.toUpperCase()}`);
+        this.audio?.uiClick();
       });
     });
     const sens = document.getElementById("r-sens");
@@ -240,11 +255,46 @@ export class HUD {
       node.addEventListener("click", () => {
         node.classList.toggle("on");
         fn(node.classList.contains("on"));
+        this.audio?.uiClick();
       });
     };
     toggle("t-bob", (on) => { player.headBob = on; });
     toggle("t-shadow", (on) => { if (this.onShadow) this.onShadow(on); });
     toggle("t-bloom", (on) => { if (this.onBloom) this.onBloom(on); });
+
+    // 音频：音乐 / 音效各自开关与音量
+    document.getElementById("r-musicvol").addEventListener("input", (e) => {
+      this.audio?.setMusicVol(Number(e.target.value));
+      this._updateAudioReadout();
+    });
+    document.getElementById("r-sfxvol").addEventListener("input", (e) => {
+      this.audio?.setSfxVol(Number(e.target.value));
+      this._updateAudioReadout();
+    });
+    toggle("t-music", (on) => { this.audio?.setMusicOn(on); this._updateAudioReadout(); });
+    toggle("t-sfx", (on) => { this.audio?.setSfxOn(on); this._updateAudioReadout(); });
+  }
+
+  _updateAudioReadout() {
+    const a = this.audio;
+    if (!a) return;
+    const s = a.settings;
+    this.dyn.musicvol?.set(s.musicOn ? Math.round(s.musicVol * 100) + "%" : "OFF");
+    this.dyn.sfxvol?.set(s.sfxOn ? Math.round(s.sfxVol * 100) + "%" : "OFF");
+  }
+
+  /** 把界面同步到（可能持久化的）音频设置。 */
+  syncAudioSettings() {
+    const a = this.audio;
+    if (!a) return;
+    const s = a.settings;
+    const mv = document.getElementById("r-musicvol");
+    const sv = document.getElementById("r-sfxvol");
+    if (mv) mv.value = String(s.musicVol);
+    if (sv) sv.value = String(s.sfxVol);
+    document.getElementById("t-music")?.classList.toggle("on", s.musicOn);
+    document.getElementById("t-sfx")?.classList.toggle("on", s.sfxOn);
+    this._updateAudioReadout();
   }
 
   toggleSettings() {

@@ -9,7 +9,7 @@
  *   俯仰角影响速度矢量、退出飞行时平滑过渡回重力。
  */
 import * as THREE from "three";
-import { isSolid, isLiquid } from "../world/blocks.js";
+import { isSolid, isLiquid, blockDef } from "../world/blocks.js";
 import { CH } from "../world/voxelWorld.js";
 
 /** 低于此高度即判定「掉出世界」，强制重生。 */
@@ -69,6 +69,19 @@ export class Player {
     this.swimming = false; // 躯干在水里（真正的游泳）
     this.headUnderwater = false; // 头部在水面下
     this.submersion = 0; // 浸没比例 0..1
+
+    // 音频事件钩子（由 main.js 挂接）
+    this.onJump = null;
+    this.onLand = null;
+    this.onFootstep = null;
+    this.onSplash = null;
+    this.onSwimStroke = null;
+    this._wasGrounded = false;
+    this._peakY = 0;
+    this._stepT = 0;
+    this._strokeT = 0;
+    this._wasSwimming = false;
+    this._wasHeadUnder = false;
 
     // 视角：yaw/pitch 目标值 + 当前值（阻尼）
     this.yaw = Math.PI;
@@ -423,6 +436,13 @@ export class Player {
     this.swimming = w.mid && !this.flying;
     this.headUnderwater = w.head;
 
+    // 入水/出水/潜水事件（用于溅水声与气泡）
+    if (this.swimming && !this._wasSwimming) this.onSplash?.("enter");
+    else if (!this.swimming && this._wasSwimming) this.onSplash?.("exit");
+    if (this.headUnderwater && !this._wasHeadUnder) this.onSplash?.("dive");
+    this._wasSwimming = this.swimming;
+    this._wasHeadUnder = this.headUnderwater;
+
     if (this.flying) {
       this._updateFlight(dt, fwd, side, sinY, cosY, keys);
     } else if (this.swimming) {
@@ -432,12 +452,21 @@ export class Player {
     }
 
     // ---- 移动与碰撞（子步进） ----
+    const wasGrounded = this.onGround;
     this.onGround = false;
     this.moveWithCollision(
       this.velocity.x * dt,
       this.velocity.y * dt,
       this.velocity.z * dt,
     );
+
+    // 落地/滞空峰值追踪：用于落地音效强度
+    if (this.onGround) {
+      if (!wasGrounded) this.onLand?.(Math.max(0, this._peakY - this.position.y));
+      this._peakY = this.position.y;
+    } else {
+      this._peakY = Math.max(this._peakY, this.position.y);
+    }
 
     // 掉出世界保护：绝不允许无限下坠。
     // 旧实现是「瞬移到 y=70 同一 x/z」，若那里正好是挖穿的洞，
@@ -465,6 +494,23 @@ export class Player {
       this.bobAmount *= 1 - Math.min(1, dt * 8);
       this.roll *= 1 - Math.min(1, dt * 8);
       this.bobPhase += dt * 1.2;
+    }
+
+    // ---- 脚步声 ----
+    if (this.onGround && horizSpeed > 0.5) {
+      this._stepT += horizSpeed * dt * (this.sprinting ? 2.3 : 1.9);
+      if (this._stepT >= 1) {
+        this._stepT -= 1;
+        const below = this.world.get(
+          Math.floor(this.position.x),
+          Math.floor(this.position.y - EPS),
+          Math.floor(this.position.z),
+        );
+        const name = this.inWater ? "water" : blockDef(below).name;
+        this.onFootstep?.(name, this.sprinting);
+      }
+    } else {
+      this._stepT = 0;
     }
 
     this.updateCamera(dt);
@@ -561,6 +607,7 @@ export class Player {
 
     if (keys.has("Space") && this.onGround) {
       this.velocity.y = JUMP_V;
+      this.onJump?.();
       this.onGround = false;
     }
   }
@@ -596,6 +643,17 @@ export class Player {
 
     // 站在水底时按跳跃可以蹬出水面（浅滩上岸）
     if (up && this.onGround) v.y = Math.max(v.y, JUMP_V * 0.72);
+
+    // 划水音：有水平推进时周期触发
+    if (fwd !== 0 || side !== 0) {
+      this._strokeT += dt;
+      if (this._strokeT >= 0.72) {
+        this._strokeT = 0;
+        this.onSwimStroke?.();
+      }
+    } else {
+      this._strokeT = Math.max(0, this._strokeT - dt);
+    }
   }
 
   /** 切换飞行：退出时保留水平动量，垂直速度平滑过渡到重力。 */
