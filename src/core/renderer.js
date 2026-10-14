@@ -277,6 +277,18 @@ export class Renderer {
     }
   }
 
+  /** 应用法线图 / 粗糙度图，拉开材质「手感」差异。 */
+  setPBR({ normalTex, roughTex }) {
+    for (const m of [this.matOpaque, this.matCutout]) {
+      m.normalMap = normalTex;
+      m.normalScale = new THREE.Vector2(0.85, 0.85);
+      m.roughnessMap = roughTex;
+      m.roughness = 1.0;      // 由贴图驱动，这里做乘子
+      m.metalness = 0.10;     // 基础介电质，琉璃/金瓦靠低粗糙度出高光
+      m.needsUpdate = true;
+    }
+  }
+
   /** 每帧根据昼夜状态更新光照、雾、天空、曝光。 */
   applyDayNight(st, sky) {
     this.sun.color.copy(st.sunColor);

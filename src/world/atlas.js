@@ -134,6 +134,128 @@ export class TextureAtlas {
     return tex;
   }
 
+  /**
+   * 生成 PBR 附加贴图：法线图 + 粗糙度图。
+   *
+   * 技术判断：单纯把 64×64 提到 128×128，像素信息翻倍但观感提升有限；
+   * 而增加法线/粗糙度通道能让「平面方块」产生凹凸与材质差异，
+   * 性价比远高于提分辨率。因此先做通道，再考虑分辨率。
+   *
+   * 法线图：从颜色亮度当高度场，Sobel 求梯度 → 切线空间法线
+   * 粗糙度图：按材质语义给不同粗糙度（琉璃瓦极光滑 → 石材粗糙）
+   */
+  buildPBR() {
+    const W = this.width;
+    const H = this.height;
+    const ctx = this.canvas.getContext("2d", { willReadFrequently: true });
+    const src = ctx.getImageData(0, 0, W, H).data;
+
+    // ---- 高度场（亮度，带轻微模糊去噪） ----
+    const lum = new Float32Array(W * H);
+    for (let i = 0, p = 0; i < lum.length; i++, p += 4) {
+      lum[i] = (src[p] * 0.299 + src[p + 1] * 0.587 + src[p + 2] * 0.114) / 255;
+    }
+    const blur = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let s = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            s += lum[yy * W + xx]; n++;
+          }
+        }
+        blur[y * W + x] = s / n;
+      }
+    }
+
+    // ---- 法线图（Sobel） ----
+    const nrm = ctx.createImageData(W, H);
+    const STRENGTH = 2.6;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const gx =
+          -blur[Math.max(0, y - 1) * W + Math.max(0, x - 1)] +
+          blur[Math.max(0, y - 1) * W + Math.min(W - 1, x + 1)] +
+          -2 * blur[y * W + Math.max(0, x - 1)] +
+          2 * blur[y * W + Math.min(W - 1, x + 1)] +
+          -blur[Math.min(H - 1, y + 1) * W + Math.max(0, x - 1)] +
+          blur[Math.min(H - 1, y + 1) * W + Math.min(W - 1, x + 1)];
+        const gy =
+          -blur[Math.max(0, y - 1) * W + Math.max(0, x - 1)] +
+          -2 * blur[Math.max(0, y - 1) * W + x] +
+          -blur[Math.max(0, y - 1) * W + Math.min(W - 1, x + 1)] +
+          blur[Math.min(H - 1, y + 1) * W + Math.max(0, x - 1)] +
+          2 * blur[Math.min(H - 1, y + 1) * W + x] +
+          blur[Math.min(H - 1, y + 1) * W + Math.min(W - 1, x + 1)];
+
+        let nx = -gx * STRENGTH;
+        let ny = -gy * STRENGTH;
+        let nz = 1.0;
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len; ny /= len; nz /= len;
+
+        const o = (y * W + x) * 4;
+        nrm.data[o] = Math.round((nx * 0.5 + 0.5) * 255);
+        nrm.data[o + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+        nrm.data[o + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+        nrm.data[o + 3] = 255;
+      }
+    }
+    const nrmCanvas = document.createElement("canvas");
+    nrmCanvas.width = W; nrmCanvas.height = H;
+    nrmCanvas.getContext("2d").putImageData(nrm, 0, 0);
+    const normalTex = new THREE.CanvasTexture(nrmCanvas);
+    normalTex.magFilter = THREE.NearestFilter;
+    normalTex.minFilter = THREE.NearestFilter;
+    normalTex.generateMipmaps = false;
+    normalTex.colorSpace = THREE.NoColorSpace;   // 数据贴图
+
+    // ---- 粗糙度图：按材质语义 ----
+    const roughOf = (name) => {
+      if (/roof_gold|gold_brick|glow|archway_plaque/.test(name)) return 0.20; // 琉璃：光滑
+      if (/jade/.test(name)) return 0.32;                                    // 玉：半光泽
+      if (/marble|railing/.test(name)) return 0.48;                          // 汉白玉：微亮
+      if (/water/.test(name)) return 0.06;                                   // 水：镜面
+      if (/wall_|pillar|beam_|crimson/.test(name)) return 0.86;              // 朱墙：漫反射
+      if (/wood|bamboo_stalk/.test(name)) return 0.66;                       // 木/竹：中等
+      if (/slate|rock|stone|moss|sand|dirt|grass/.test(name)) return 0.94;   // 石土：粗糙
+      return 0.80;
+    };
+
+    const rgh = ctx.createImageData(W, H);
+    rgh.data.fill(255);
+    for (const [name, i] of this.index) {
+      const base = name.split("#")[0];
+      const rv = Math.round(roughOf(base) * 255);
+      const cx = i % this.cols;
+      const cy = (i / this.cols) | 0;
+      const ox = cx * CELL, oy = cy * CELL;
+      for (let y = 0; y < CELL; y++) {
+        for (let x = 0; x < CELL; x++) {
+          // 加一点像素噪声，避免整块死平
+          const n = ((x * 7 + y * 13) % 5) - 2;
+          const v = Math.max(0, Math.min(255, rv + n * 2));
+          const o = ((oy + y) * W + (ox + x)) * 4;
+          rgh.data[o] = v; rgh.data[o + 1] = v; rgh.data[o + 2] = v; rgh.data[o + 3] = 255;
+        }
+      }
+    }
+    const rghCanvas = document.createElement("canvas");
+    rghCanvas.width = W; rghCanvas.height = H;
+    rghCanvas.getContext("2d").putImageData(rgh, 0, 0);
+    const roughTex = new THREE.CanvasTexture(rghCanvas);
+    roughTex.magFilter = THREE.NearestFilter;
+    roughTex.minFilter = THREE.NearestFilter;
+    roughTex.generateMipmaps = false;
+    roughTex.colorSpace = THREE.NoColorSpace;
+
+    this.normalTexture = normalTex;
+    this.roughnessTexture = roughTex;
+    return { normalTex, roughTex };
+  }
+
   /** 生成单个 tile 的独立 canvas，供 UI 快捷栏图标使用。 */
   tileCanvas(name, size = 64) {
     const fn = ALL_TILES[name] || ALL_TILES[name.split("#")[0]];

@@ -54,6 +54,9 @@ async function boot() {
   const atlas = new TextureAtlas();
   atlas.build();
   renderer.setAtlas(atlas.texture);
+  // PBR 附加通道：法线 + 粗糙度（性价比高于单纯提分辨率）
+  atlas.buildPBR();
+  renderer.setPBR({ normalTex: atlas.normalTexture, roughTex: atlas.roughnessTexture });
   hud0.set(0.2, "SHAPING THE TERRAIN...");
   await frame();
 
