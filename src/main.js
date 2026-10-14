@@ -14,7 +14,7 @@ import { Interaction } from "./player/interaction.js";
 import { HUD } from "./ui/hud.js";
 import { NPCManager } from "./world/npc.js";
 import { CITY_PLAN } from "./world/cityPlan.js";
-import { PetalField, SmokeField, LanternSway, MistLayers } from "./core/particles.js";
+import { PetalField, SmokeField, LanternSway, MistLayers, SkyLanterns } from "./core/particles.js";
 import { COLLISION_TEST_SOURCE } from "../tests/collision.test.mjs";
 import { ISLAND_ACCESS_TEST_SOURCE } from "../tests/island-access.test.mjs";
 import { BLOCKS } from "./world/blocks.js";
@@ -162,6 +162,8 @@ async function boot() {
   const lanternSway = new LanternSway(glowCore.mesh, glowCore.positions);
   // 分层雾带：大气透视的纵深来源
   const mist = new MistLayers(renderer.scene, [38, 46, 56, 70]);
+  // 孔明灯：夜间升空的暖色光点
+  const skyLanterns = new SkyLanterns(renderer.scene, 120, { baseY: 36, rise: 74, range: 130 });
 
   // 开场遮罩点击进入（先放一段 cinematic 巡游，再交还给玩家）
   document.getElementById("overlay").addEventListener("click", () => {
@@ -332,11 +334,13 @@ async function boot() {
     smoke.update(elapsed);
     lanternSway.update(elapsed);
     mist.update(elapsed, renderer.camera, st.night);
+    skyLanterns.update(elapsed, player.position, st.night);
 
     // 开场 cinematic 巡游镜头
     if (cinematic.active) updateCinematic(dt);
 
     // 渲染
+    renderer.updateSunScreen();
     renderer.render();
 
     // 统计

@@ -202,6 +202,109 @@ export class SmokeField {
 }
 
 /**
+ * 孔明灯 —— 夜间升空的暖色光点，最有氛围感的动态事件。
+ *
+ * 用 Points + 顶点着色器实现：每盏灯沿自己的时间相位从低处缓缓升起，
+ * 轻微横漂，升到顶后循环。仅在夜晚出现。
+ */
+export class SkyLanterns {
+  constructor(scene, count = 120, opts = {}) {
+    this.count = count;
+    this.baseY = opts.baseY ?? 36;
+    this.rise = opts.rise ?? 70;
+    this.range = opts.range ?? 130;
+    this.origin = new THREE.Vector3(0, 0, 0);
+
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const phase = new Float32Array(count);
+    const speed = new Float32Array(count);
+    const size = new Float32Array(count);
+
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * this.range;
+      pos[i * 3] = Math.cos(a) * r;
+      pos[i * 3 + 1] = 0;
+      pos[i * 3 + 2] = Math.sin(a) * r;
+      phase[i] = Math.random();
+      speed[i] = 0.020 + Math.random() * 0.022;
+      size[i] = 0.7 + Math.random() * 0.9;
+    }
+
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
+    geo.setAttribute("aSpeed", new THREE.BufferAttribute(speed, 1));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
+
+    this.uniforms = {
+      uTime: { value: 0 },
+      uOrigin: { value: this.origin.clone() },
+      uBaseY: { value: this.baseY },
+      uRise: { value: this.rise },
+      uVisible: { value: 0 },
+    };
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms,
+      vertexShader: /* glsl */ `
+        attribute float aPhase;
+        attribute float aSpeed;
+        attribute float aSize;
+        uniform float uTime;
+        uniform vec3 uOrigin;
+        uniform float uBaseY;
+        uniform float uRise;
+        uniform float uVisible;
+        varying float vAlpha;
+        void main() {
+          float t = fract(uTime * aSpeed + aPhase);
+          vec3 p = vec3(
+            uOrigin.x + position.x + sin(uTime * 0.25 + aPhase * 12.0) * 2.3,
+            uBaseY + t * uRise,
+            uOrigin.z + position.z + cos(uTime * 0.21 + aPhase * 8.0) * 2.3
+          );
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_PointSize = aSize * 190.0 / max(-mv.z, 1.0);
+          // 升起淡入、顶端淡出
+          vAlpha = smoothstep(0.0, 0.08, t) * (1.0 - smoothstep(0.85, 1.0, t)) * uVisible;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        varying float vAlpha;
+        void main() {
+          vec2 c = gl_PointCoord - 0.5;
+          float d = length(c);
+          if (d > 0.5) discard;
+          // 灯体：暖橙色，中心偏白
+          vec3 warm = mix(vec3(1.0, 0.62, 0.26), vec3(1.0, 0.93, 0.72), smoothstep(0.34, 0.0, d));
+          float a = smoothstep(0.5, 0.06, d) * vAlpha;
+          gl_FragColor = vec4(warm, a);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    this.points.renderOrder = 6;
+    scene.add(this.points);
+  }
+
+  update(elapsed, playerPos, night) {
+    this.uniforms.uTime.value = elapsed;
+    this.uniforms.uOrigin.value.set(playerPos.x, 0, playerPos.z);
+    // 只在傍晚到黎明之间出现
+    this.uniforms.uVisible.value = Math.max(0, Math.min(1, (night - 0.25) / 0.5));
+    this.points.visible = this.uniforms.uVisible.value > 0.01;
+  }
+}
+
+/**
  * 分层雾带 —— 大气透视的「纵深」来源。
  *
  * 在几个不同高度平铺半透明的云雾面，近景清晰、中景淡、远景只剩剪影。

@@ -85,6 +85,61 @@ const GradeShader = {
   `,
 };
 
+/* ---------------- 后处理：体积光（god rays） ---------------- */
+const GodRayShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uSunScreen: { value: new THREE.Vector2(0.5, 0.8) },
+    uStrength: { value: 0.55 },
+    uDecay: { value: 0.94 },
+    uDensity: { value: 0.55 },
+    uWeight: { value: 0.42 },
+    uThreshold: { value: 0.62 },
+    uNight: { value: 0 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    precision highp float;
+    uniform sampler2D tDiffuse;
+    uniform vec2 uSunScreen;
+    uniform float uStrength;
+    uniform float uDecay;
+    uniform float uDensity;
+    uniform float uWeight;
+    uniform float uThreshold;
+    uniform float uNight;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      vec2 delta = (vUv - uSunScreen) * uDensity / 24.0;
+      vec2 uv = vUv;
+      vec3 acc = vec3(0.0);
+      float decay = 1.0;
+      for (int i = 0; i < 24; i++) {
+        uv -= delta;
+        vec3 s = texture2D(tDiffuse, clamp(uv, 0.0, 1.0)).rgb;
+        // 只让亮部（天空、金瓦高光）产生光束
+        float lum = dot(s, vec3(0.2126, 0.7152, 0.0722));
+        s *= smoothstep(uThreshold, 1.0, lum);
+        acc += s * decay * uWeight;
+        decay *= uDecay;
+      }
+      // 太阳在屏幕外或夜晚则减弱
+      float onScreen = step(0.0, uSunScreen.x) * step(uSunScreen.x, 1.0)
+                     * step(0.0, uSunScreen.y) * step(uSunScreen.y, 1.0);
+      float amt = uStrength * onScreen * (1.0 - uNight * 0.92);
+      gl_FragColor = vec4(base.rgb + acc * amt, base.a);
+    }
+  `,
+};
+
 export class Renderer {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({
@@ -182,6 +237,10 @@ export class Renderer {
 
     this.bloom = new UnrealBloomPass(size, 0.62, 0.72, 0.72);
     this.composer.addPass(this.bloom);
+
+    // 体积光：穿过竹林与屋檐的阳光束
+    this.godrays = new ShaderPass(GodRayShader);
+    this.composer.addPass(this.godrays);
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.grade);
 
@@ -340,6 +399,22 @@ export class Renderer {
         st.sunDir, st.sunColor, st.moonDir, st.night,
       );
     }
+
+    // 体积光参数随昼夜
+    if (this.godrays) {
+      this.godrays.uniforms.uNight.value = st.night;
+      this.godrays.uniforms.uStrength.value = 0.30 + st.warm * 0.75;
+      this.godrays.uniforms.uThreshold.value = 0.55 + st.night * 0.25;
+    }
+  }
+
+  /** 把太阳世界坐标投影到屏幕，供体积光使用。 */
+  updateSunScreen() {
+    if (!this.godrays || !this._sunDir) return;
+    const v = this._sunScreenTmp || (this._sunScreenTmp = new THREE.Vector3());
+    v.copy(this.camera.position).addScaledVector(this._sunDir, 400);
+    v.project(this.camera);
+    this.godrays.uniforms.uSunScreen.value.set(v.x * 0.5 + 0.5, v.y * 0.5 + 0.5);
   }
 
   /** 太阳方向光跟随玩家，保证阴影相机始终罩住视野。 */
