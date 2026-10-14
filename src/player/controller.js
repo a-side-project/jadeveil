@@ -9,7 +9,7 @@
  *   俯仰角影响速度矢量、退出飞行时平滑过渡回重力。
  */
 import * as THREE from "three";
-import { isSolid } from "../world/blocks.js";
+import { isSolid, isLiquid } from "../world/blocks.js";
 import { CH } from "../world/voxelWorld.js";
 
 /** 低于此高度即判定「掉出世界」，强制重生。 */
@@ -25,6 +25,18 @@ const JUMP_V = 9.4;
 const WALK = 5.0;
 const RUN = 8.6;
 const MAX_FALL = 60;
+
+// ---- 游泳物理 ----
+// 浮力按浸没比例驱动：平衡点 sub = WATER_SINK / BUOYANCY ≈ 0.83，
+// 即身体约 83% 沉在水下、头露出水面 —— 这才是人真正浮在水上的样子。
+const SWIM = 3.6; // 常态游速
+const SWIM_FAST = 5.8; // 加速游速
+const SWIM_UP = 4.4; // 主动上浮
+const SWIM_DOWN = 5.0; // 主动下潜
+const BUOYANCY = 3.6; // 净浮力系数
+const WATER_SINK = 3.0; // 水中自重下沉
+const SWIM_TURN = 8.0; // 垂直速度响应速度
+const WADE_DRAG = 0.52; // 浅滩涉水的减速
 
 // 飞行物理参数
 const FLY_ACCEL = 26; // 推进加速度
@@ -51,6 +63,12 @@ export class Player {
     this.onGround = false;
     this.flying = false;
     this.sprinting = false;
+
+    // 水体状态
+    this.inWater = false; // 脚部在水里（涉水）
+    this.swimming = false; // 躯干在水里（真正的游泳）
+    this.headUnderwater = false; // 头部在水面下
+    this.submersion = 0; // 浸没比例 0..1
 
     // 视角：yaw/pitch 目标值 + 当前值（阻尼）
     this.yaw = Math.PI;
@@ -118,6 +136,43 @@ export class Player {
       this.position.y + EYE_H + this.bobAmount,
       this.position.z,
     );
+  }
+
+  /* ================= 水体 ================= */
+
+  /**
+   * 分别取脚部 / 躯干 / 眼睛所处的格子是否为液体。
+   * 用格子中心判定，避免站在水陆交界处反复抖动。
+   */
+  probeWater() {
+    const p = this.position;
+    const x = Math.floor(p.x);
+    const z = Math.floor(p.z);
+    return {
+      feet: isLiquid(this.world.get(x, Math.floor(p.y + 0.1), z)),
+      mid: isLiquid(this.world.get(x, Math.floor(p.y + PLAYER_H * 0.5), z)),
+      head: isLiquid(this.world.get(x, Math.floor(p.y + EYE_H), z)),
+    };
+  }
+
+  /**
+   * 浸没比例 0..1：身体有多大比例位于水面以下。
+   *
+   * 自上而下扫，找到的第一格水其顶面即近似水面高度。
+   * 这个量直接决定浮力大小。
+   */
+  submersionAt() {
+    const p = this.position;
+    const x = Math.floor(p.x);
+    const z = Math.floor(p.z);
+    for (let h = PLAYER_H; h >= -0.01; h -= 0.25) {
+      const wy = Math.floor(p.y + h);
+      if (isLiquid(this.world.get(x, wy, z))) {
+        const surfaceY = wy + 1;
+        return Math.max(0, Math.min(1, (surfaceY - p.y) / PLAYER_H));
+      }
+    }
+    return 0;
   }
 
   /* ================= 碰撞 ================= */
@@ -360,8 +415,18 @@ export class Player {
     const sinY = Math.sin(this.yaw);
     const cosY = Math.cos(this.yaw);
 
+    // ---- 入水判定 ----
+    const w = this.probeWater();
+    this.inWater = w.feet;
+    this.submersion = w.feet || w.mid ? this.submersionAt() : 0;
+    // 躯干浸在水里才算真的在游；只有脚踝沾水只是涉水
+    this.swimming = w.mid && !this.flying;
+    this.headUnderwater = w.head;
+
     if (this.flying) {
       this._updateFlight(dt, fwd, side, sinY, cosY, keys);
+    } else if (this.swimming) {
+      this._updateSwim(dt, fwd, side, sinY, cosY, keys);
     } else {
       this._updateWalk(dt, fwd, side, sinY, cosY, keys);
     }
@@ -481,7 +546,8 @@ export class Player {
 
   /** 步行物理：重力 + 跳跃 + 地面/空中不同的操控性。 */
   _updateWalk(dt, fwd, side, sinY, cosY, keys) {
-    const speed = this.sprinting ? RUN : WALK;
+    // 浅滩涉水：速度明显下降，走起来有阻力
+    const speed = (this.sprinting ? RUN : WALK) * (this.inWater ? WADE_DRAG : 1);
     const dirX = -sinY * fwd + cosY * side;
     const dirZ = -cosY * fwd - sinY * side;
 
@@ -497,6 +563,39 @@ export class Player {
       this.velocity.y = JUMP_V;
       this.onGround = false;
     }
+  }
+
+  /**
+   * 游泳物理。
+   *
+   *  · 浮力按浸没比例驱动：浸得越深托得越强，
+   *    于是玩家自然停在「头露出水面」的平衡位置，而不是一直沉底或一直上飘
+   *  · Space 上浮、Ctrl / C 下潜
+   *  · 水的粘滞阻力远大于空气，松手后很快滑行减速
+   */
+  _updateSwim(dt, fwd, side, sinY, cosY, keys) {
+    const v = this.velocity;
+    const speed = this.sprinting ? SWIM_FAST : SWIM;
+    const dirX = -sinY * fwd + cosY * side;
+    const dirZ = -cosY * fwd - sinY * side;
+
+    // 水平：水中加减速都比陆地柔和
+    const acc = 1 - Math.exp(-6.5 * dt);
+    v.x += (dirX * speed - v.x) * acc;
+    v.z += (dirZ * speed - v.z) * acc;
+
+    const up = keys.has("Space");
+    const down = keys.has("ControlLeft") || keys.has("KeyC");
+
+    // 目标垂直速度 = 自重下沉 + 浮力上托
+    let targetVy = -WATER_SINK + BUOYANCY * this.submersion;
+    if (up) targetVy = SWIM_UP;
+    else if (down) targetVy = -SWIM_DOWN;
+
+    v.y += (targetVy - v.y) * (1 - Math.exp(-SWIM_TURN * dt));
+
+    // 站在水底时按跳跃可以蹬出水面（浅滩上岸）
+    if (up && this.onGround) v.y = Math.max(v.y, JUMP_V * 0.72);
   }
 
   /** 切换飞行：退出时保留水平动量，垂直速度平滑过渡到重力。 */

@@ -10,6 +10,7 @@ import { Renderer } from "./core/renderer.js";
 import { Sky } from "./core/sky.js";
 import { DayNight } from "./core/daynight.js";
 import { Player, CAMERA_LABELS } from "./player/controller.js";
+import { Avatar } from "./player/avatar.js";
 import { Interaction } from "./player/interaction.js";
 import { HUD } from "./ui/hud.js";
 import { NPCManager } from "./world/npc.js";
@@ -21,6 +22,7 @@ import { BLOCKS } from "./world/blocks.js";
 import { installPixelUI } from "./ui/pixelui.js";
 import { attachPixelText } from "./ui/pixelfont.js";
 import { WORLDGUARD_TEST_SOURCE } from "../tests/worldguard.test.mjs";
+import { WATER_TEST_SOURCE } from "../tests/water.test.mjs";
 
 // 像素风界面必须在任何内容渲染前装好（含加载页）
 installPixelUI();
@@ -86,6 +88,16 @@ async function boot() {
   // 5. 玩家
   const player = new Player(world, renderer.camera, canvas);
   player.spawnAt(world);
+
+  // 5b. 玩家化身（熊猫人武僧）
+  // 第三人称时显示全身；第一人称时只有入水才伸出一双手划水。
+  const avatar = new Avatar();
+  renderer.scene.add(avatar.group);
+  // 手部视模型挂在相机下，因此相机必须在场景图里
+  renderer.camera.add(avatar.viewArms);
+  renderer.scene.add(renderer.camera);
+  avatar.setMode(player.mode);
+  avatar.placeTo(player.position);
 
   // 6. 交互
   const interaction = new Interaction(world, renderer.camera, player, renderer.scene);
@@ -296,6 +308,19 @@ async function boot() {
     // 玩家
     player.update(dt);
 
+    // 玩家化身：姿势由状态驱动（站立/行走/奔跑/游泳/飞行）
+    avatar.setMode(player.mode);
+    avatar.placeTo(player.position);
+    avatar.update(dt, {
+      swimming: player.swimming,
+      submersion: player.submersion,
+      onGround: player.onGround,
+      speed: Math.hypot(player.velocity.x, player.velocity.z),
+      sprinting: player.sprinting,
+      flying: player.flying,
+      yaw: player.yaw,
+    });
+
     // 区块流式加载
     chunks.update(player.position);
     chunks.processDirty(2);
@@ -387,6 +412,7 @@ async function boot() {
     gen,
     chunks,
     player,
+    avatar,
     daynight,
     interaction,
     hud,
@@ -418,6 +444,7 @@ async function boot() {
     },
     setMode(m) {
       player.mode = m;
+      avatar.setMode(m);
     },
     /** 重放开场巡游镜头。 */
     playCinematic: () => startCinematic(),
@@ -473,6 +500,11 @@ async function boot() {
     runWorldGuardTests() {
       // eslint-disable-next-line no-eval
       return eval(WORLDGUARD_TEST_SOURCE);
+    },
+    /** 运行水体 / 游泳测试。 */
+    runWaterTests() {
+      // eslint-disable-next-line no-eval
+      return eval(WATER_TEST_SOURCE);
     },
   };
   app.ready = true;
