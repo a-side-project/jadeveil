@@ -1,0 +1,44 @@
+# ---- dependencies ----
+node_modules/
+package-lock.json.bak
+
+# ---- build / cache ----
+dist/
+build/
+.cache/
+.parcel-cache/
+.vite/
+*.tsbuildinfo
+
+# ---- logs ----
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ---- OS / editor ----
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---- temp / scratch ----
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# ---- ego / agent scratch ----
+# 调试脚本与 ego 工作区产物不进仓库
+ego/
+*.mjs.bak
+scratch/
+
+# 说明：
+#  screenshots/ 保留入库（基线快照需要可复现的视觉证据）
+#  node_modules/ 排除（用 npm install 还原）
