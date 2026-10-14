@@ -16,6 +16,7 @@ const def = (name, faces, opts = {}) => ({
   light: opts.light || 0,
   liquid: !!opts.liquid,
   cutout: !!opts.cutout,
+  unbreakable: !!opts.unbreakable,
   label: opts.label || name,
 });
 
@@ -26,6 +27,9 @@ const tsc = (top, side, bottom = side) => [side, side, top, bottom, side, side];
 
 export const BLOCKS = [
   def("air", all(null), { solid: false, opaque: false, label: "AIR" }),
+
+  // 基岩：世界底，不可破坏、不可覆盖
+  def("bedrock", all("bedrock"), { unbreakable: true, label: "BEDROCK" }),
 
   def("grass", tsc("grass_top", "grass_side", "dirt"), { label: "GRASS" }),
   def("dirt", all("dirt"), { label: "DIRT" }),
@@ -108,3 +112,11 @@ export function isOpaque(id) {
 export function isLiquid(id) {
   return BLOCKS[id] ? BLOCKS[id].liquid : false;
 }
+
+/** 是否不可破坏（基岩等世界底方块）。 */
+export function isUnbreakable(id) {
+  return BLOCKS[id] ? !!BLOCKS[id].unbreakable : false;
+}
+
+/** 世界底基岩的高度范围（含）。 */
+export const BEDROCK_TOP = 2;

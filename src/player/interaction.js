@@ -3,7 +3,7 @@
  * 用 DDA 而不是三角面 raycast：更快、更准，且天然给出被击中的面法线。
  */
 import * as THREE from "three";
-import { AIR, ID, isLiquid, blockDef } from "../world/blocks.js";
+import { AIR, ID, isLiquid, isUnbreakable, blockDef } from "../world/blocks.js";
 
 // 与 controller.js 保持一致，避免判定区与实际碰撞体不符
 const PLAYER_W = 0.32;
@@ -130,8 +130,11 @@ export class Interaction {
     }
     this.highlight.visible = true;
     this.highlight.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
-
-    this.faceMark.visible = true;
+    // 不可破坏方块（基岩）用冷色描边，一眼区分「这是世界底」
+    const unb = isUnbreakable(hit.id);
+    this.highlight.material.color.setHex(unb ? 0x6a7f9a : 0xffe9b8);
+    this.faceMark.visible = !unb;
+    if (unb) return;
     this.faceMark.position.set(
       hit.x + 0.5 + hit.nx * 0.502,
       hit.y + 0.5 + hit.ny * 0.502,
@@ -146,6 +149,11 @@ export class Interaction {
     const hit = this.hit || this.raycast();
     if (!hit) return false;
     if (hit.id === ID.water) return false;
+    // 基岩不可破坏 —— 世界底的最后一道防线
+    if (isUnbreakable(hit.id)) {
+      if (this.onBlocked) this.onBlocked("BEDROCK — CANNOT BREAK");
+      return false;
+    }
     this.world.set(hit.x, hit.y, hit.z, AIR);
     return true;
   }
@@ -158,6 +166,8 @@ export class Interaction {
     const z = hit.z + hit.nz;
     const cur = this.world.get(x, y, z);
     if (cur !== AIR && !isLiquid(cur)) return false;
+    // 双保险：不可破坏方块不可被覆盖
+    if (isUnbreakable(cur)) return false;
 
     // 不能把方块放进玩家身体里（用与碰撞一致的 AABB）
     const p = this.player.position;

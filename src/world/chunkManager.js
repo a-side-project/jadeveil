@@ -4,7 +4,7 @@
  */
 import * as THREE from "three";
 import { ChunkMesher } from "./mesher.js";
-import { CW } from "./voxelWorld.js";
+import { CW, VoxelWorld } from "./voxelWorld.js";
 
 export class ChunkManager {
   constructor(world, atlas, renderer, opts = {}) {
@@ -125,7 +125,7 @@ export class ChunkManager {
     const dirty = this.world.takeDirty();
     if (dirty.length) {
       for (const k of dirty) {
-        const [cx, cz] = k.split(",").map(Number);
+        const [cx, cz] = VoxelWorld.decode(k);
         const dx = cx - pcx;
         const dz = cz - pcz;
         if (dx * dx + dz * dz > R * R) continue;
@@ -138,7 +138,7 @@ export class ChunkManager {
   cull(playerPos) {
     const cd2 = this.cullDistance * this.cullDistance;
     for (const [k, entry] of this.meshes) {
-      const [cx, cz] = k.split(",").map(Number);
+      const [cx, cz] = VoxelWorld.decode(k);
       const dx = cx * CW + CW / 2 - playerPos.x;
       const dz = cz * CW + CW / 2 - playerPos.z;
       const d2 = dx * dx + dz * dz;

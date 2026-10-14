@@ -6,7 +6,7 @@
  *   · 南端：石狮牌坊 → 灯笼长街 → 中央水池（荷花）→ 主殿（重檐金瓦）
  *   · 东西两侧：配殿、宝塔、竹林、云雾仙山浮岛
  */
-import { ID } from "./blocks.js";
+import { ID, BEDROCK_TOP } from "./blocks.js";
 import { VoxelWorld, CH } from "./voxelWorld.js";
 import { fbm2, ridge2, valueNoise2, hash2i, clamp, smoothstep, warp2 } from "../core/noise.js";
 import { CITY_PLAN } from "./cityPlan.js";
@@ -71,22 +71,38 @@ export class WorldGenerator {
 
   /* ================= 地形填充 ================= */
 
+  /**
+   * 世界底基岩层。
+   *
+   * 铺满整个生成区域（含城墙外、浮岛正下方），作为世界的绝对底。
+   * 不可破坏、不可覆盖，从根源上杆绝「挖穿后无限下坠」。
+   */
+  buildBedrock() {
+    const w = this.world;
+    const R = 176; // 比生成半径（168）再大一圈，避免边缘漏洞
+    for (let x = -R; x <= R; x++) {
+      for (let z = -R; z <= R; z++) {
+        w.fillColumnRaw(x, z, 0, BEDROCK_TOP, ID.bedrock);
+      }
+    }
+    return this;
+  }
+
   generateTerrain() {
     const w = this.world;
     const R = 168; // 生成半径（区块对齐）
     const step = 1;
-    // 只填充到地表以下 MAX_DEPTH 格：
-    // 玩家永远看不到更深处，但全填到 y=0 会产生上千万次写入，
-    // 在世界高度提升到 160 后足以卡死浏览器。
-    const MAX_DEPTH = 14;
+    // 从基岩顶面之上开始填充，一直填到地表。
+    // 关键：必须填满到 y = BEDROCK_TOP+1，否则地表之下会留下真空腔，
+    // 玩家挖下去就会掉进虚空（旧版只填 14 格，这是无限下坠的根因）。
+    const yBase = BEDROCK_TOP + 1;
 
     for (let x = -R; x <= R; x += step) {
       for (let z = -R; z <= R; z += step) {
         const h = this.heightAt(x, z);
         const biome = this.biomeAt(x, z, h);
-        const yBottom = Math.max(0, h - MAX_DEPTH);
 
-        for (let y = yBottom; y <= h; y++) {
+        for (let y = yBase; y <= h; y++) {
           let id;
           const depth = h - y;
           if (depth === 0) {
@@ -100,14 +116,13 @@ export class WorldGenerator {
           } else {
             id = ID.stone_dark;
           }
-          // 山体表面混入苔石
           if (biome === 2 && depth === 0 && hash2i(x, z, this.seed + 9) > 0.55) id = ID.moss_stone;
-          w.set(x, y, z, id);
+          w.setRaw(x, y, z, id);
         }
 
         // 水体
         if (h < CITY.waterY) {
-          for (let y = h + 1; y <= CITY.waterY; y++) w.set(x, y, z, ID.water);
+          w.fillColumnRaw(x, z, h + 1, CITY.waterY, ID.water);
         }
       }
     }
@@ -982,6 +997,8 @@ export class WorldGenerator {
   /* ================= 总装 ================= */
 
   generate() {
+    // 1. 先铺世界底基岩（先于一切其他生成）
+    this.buildBedrock();
     this.generateTerrain();
     // 远景山峦：在生成半径外缘堆山，制造纵深
     this.buildFarMountains();
@@ -1049,6 +1066,9 @@ export class WorldGenerator {
 
     // 巨型地标：通天宝塔，立于中轴主殿之后，全城可见
     this.buildGrandPagoda(0, -92, 9);
+
+    // 生成阶段用了 setRaw/fillColumnRaw（不逐格标脏），这里统一标脏
+    this.world.markAllDirty();
 
     return this.world;
   }

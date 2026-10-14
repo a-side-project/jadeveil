@@ -332,6 +332,37 @@ export const NATURE_TILES = {
     b.outline(P.grassDeep, 130, true);
   },
 
+  /* ---------------- 基岩（世界底，不可破坏） ---------------- */
+  bedrock: (b) => {
+    b.seed(150);
+    // 近黑的深色岩体，带细密裂纹，与普通石材一眼区分
+    const base = mix(P.ink4, P.inkDeep, 0.45);
+    b.fill(base);
+    for (let i = 0; i < 260 * K; i++) {
+      const x = (b.rnd() * S) | 0, y = (b.rnd() * S) | 0;
+      const n = b.rnd();
+      const c = n > 0.72 ? mix(base, P.ink, 0.5)
+              : n > 0.4  ? mix(base, P.slateDeep, 0.35)
+              : darken(base, 0.35);
+      b.set(x, y, c);
+      if (b.rnd() > 0.75) b.set(x + 1, y, mix(c, base, 0.5));
+    }
+    // 交错裂纹
+    for (let i = 0; i < 7 * K; i++) {
+      let x = (b.rnd() * S) | 0, y = (b.rnd() * S) | 0;
+      for (let k = 0; k < 9 * K; k++) {
+        b.set(x, y, darken(base, 0.5));
+        x += b.rnd() > 0.5 ? 1 : -1;
+        y += b.rnd() > 0.55 ? 1 : 0;
+      }
+    }
+    // 稀疏高光颗粒，避免整块死黑
+    for (let i = 0; i < 40 * K; i++) {
+      b.set((b.rnd() * S) | 0, (b.rnd() * S) | 0, mix(base, P.slateLit, 0.45));
+    }
+    bevel(b, 0.16, 0.22);
+  },
+
   /* ---------------- 云与雾 ---------------- */
   cloud: (b) => {
     b.seed(140);

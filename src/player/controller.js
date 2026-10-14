@@ -12,6 +12,9 @@ import * as THREE from "three";
 import { isSolid } from "../world/blocks.js";
 import { CH } from "../world/voxelWorld.js";
 
+/** 低于此高度即判定「掉出世界」，强制重生。 */
+export const VOID_Y = -1;
+
 const PLAYER_W = 0.32; // 半宽（AABB 半径）
 const PLAYER_H = 1.78; // 身高
 const EYE_H = 1.62; // 眼高
@@ -371,11 +374,11 @@ export class Player {
       this.velocity.z * dt,
     );
 
-    // 掉出世界保护
-    if (this.position.y < -8) {
-      this.position.y = 70;
-      this.velocity.set(0, 0, 0);
-    }
+    // 掉出世界保护：绝不允许无限下坠。
+    // 旧实现是「瞬移到 y=70 同一 x/z」，若那里正好是挖穿的洞，
+    // 玩家会再次掉下去 —— 形成无限循环（用户遇到的 bug）。
+    // 现在改为重生到校验过的安全点。
+    if (this.position.y < VOID_Y) this.respawn();
     // 世界顶部硬限位：绝不允许飞出体素体积（否则上方无碰撞体可挡）
     const CEIL = CH - PLAYER_H - 0.05;
     if (this.position.y > CEIL) {
@@ -562,16 +565,72 @@ export class Player {
     return this.mode;
   }
 
-  /** 出生点：站在中轴大道上，面向主殿。 */
-  spawnAt(world) {
-    const x = 0;
-    const z = 84;
-    const h = world.groundHeight(x, z);
-    this.position.set(x + 0.5, (h < 0 ? 40 : h + 1) + 0.1, z + 0.5);
+  /**
+   * 寻找一个**校验过的安全出生点**。
+   *
+   * 安全定义：
+   *   1. 该列存在不透明地面（gy >= 0）
+   *   2. 脚部所在格与头顶两格都是空的（不会卡进方块）
+   *
+   * 从偏好点螺旋向外搜索，找不到则退而求其次。
+   */
+  findSafeSpawn(world, preferX = 0, preferZ = 84) {
+    const ok = (x, z) => {
+      const gy = world.groundHeight(x, z); // 只统计不透明方块
+      if (gy < 0) return null;
+      if (isSolid(world.get(x, gy + 1, z))) return null;
+      if (isSolid(world.get(x, gy + 2, z))) return null;
+      return gy;
+    };
+
+    const px = Math.round(preferX), pz = Math.round(preferZ);
+    let gy = ok(px, pz);
+    if (gy !== null) return new THREE.Vector3(px + 0.5, gy + 1.001, pz + 0.5);
+
+    for (let r = 2; r <= 140; r += 2) {
+      const n = Math.max(8, Math.round(r * 0.9));
+      for (let a = 0; a < n; a++) {
+        const ang = (a / n) * Math.PI * 2;
+        const x = Math.round(px + Math.cos(ang) * r);
+        const z = Math.round(pz + Math.sin(ang) * r);
+        const g = ok(x, z);
+        if (g !== null) return new THREE.Vector3(x + 0.5, g + 1.001, z + 0.5);
+      }
+    }
+
+    // 兜底：任意有实心支撑的高度（基岩之上）
+    for (let r = 0; r <= 140; r += 4) {
+      for (const s of [-1, 1]) {
+        const x = Math.round(px + r * s);
+        const h = world.topSolidHeight(x, pz);
+        if (h >= 0) return new THREE.Vector3(x + 0.5, h + 1.001, pz + 0.5);
+      }
+    }
+    return new THREE.Vector3(px + 0.5, CH - 20, pz + 0.5);
+  }
+
+  /** 重生到安全点（掉出世界时调用）。 */
+  respawn() {
+    const p = this.findSafeSpawn(this.world, 0, 84);
+    this.position.copy(p);
     this.velocity.set(0, 0, 0);
+    this.onGround = true;
+    this.flying = false;
+    this.voidRespawns = (this.voidRespawns || 0) + 1;
+    if (this.onRespawn) this.onRespawn(p);
+    return p;
+  }
+
+  /** 出生点：校验过的安全位置，面向主殿。 */
+  spawnAt(world) {
+    const p = this.findSafeSpawn(world, 0, 84);
+    this.position.copy(p);
+    this.velocity.set(0, 0, 0);
+    this.onGround = true;
     this.yaw = Math.PI;
     this.targetYaw = Math.PI;
     this.pitch = -0.05;
     this.targetPitch = -0.05;
+    return p;
   }
 }

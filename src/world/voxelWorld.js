@@ -10,12 +10,21 @@ export const CW = 16; // 区块宽度/深度
 export class VoxelWorld {
   constructor(seed = 20261014) {
     this.seed = seed;
-    this.chunks = new Map(); // "cx,cz" -> Uint8Array
+    this.chunks = new Map(); // 数字键 -> Uint8Array
     this.dirty = new Set();
   }
 
+  /**
+   * 区块键：用数字而非字符串。
+   * 旧的 `cx + "," + cz` 在生成阶段要调用百万次，
+   * 每次都分配一个字符串，是启动耗时的主因。
+   */
   static key(cx, cz) {
-    return cx + "," + cz;
+    return (cx + 1024) * 4096 + (cz + 1024);
+  }
+
+  static decode(k) {
+    return [Math.floor(k / 4096) - 1024, (k % 4096) - 1024];
   }
 
   ensureChunk(cx, cz) {
@@ -59,6 +68,26 @@ export class VoxelWorld {
     if (lx === 15) this.dirty.add(VoxelWorld.key(cx + 1, cz));
     if (lz === 0) this.dirty.add(VoxelWorld.key(cx, cz - 1));
     if (lz === 15) this.dirty.add(VoxelWorld.key(cx, cz + 1));
+  }
+
+  /**
+   * 批量写入专用：不做脏标记、不查边界。
+   * 仅用于世界生成阶段（生成结束后统一 markAllDirty）。
+   */
+  setRaw(x, y, z, id) {
+    if (y < 0 || y >= CH) return;
+    const c = this.ensureChunk(x >> 4, z >> 4);
+    c[this.idx(x & 15, y, z & 15)] = id;
+  }
+
+  /** 整列写入（基岩层、地形填充），避免逐格调用开销。 */
+  fillColumnRaw(x, z, y0, y1, id) {
+    const c = this.ensureChunk(x >> 4, z >> 4);
+    const lx = x & 15;
+    const lz = z & 15;
+    const a = Math.max(0, y0);
+    const b = Math.min(CH - 1, y1);
+    for (let y = a; y <= b; y++) c[(y * CW + lz) * CW + lx] = id;
   }
 
   /** 只在空气处写入（地形生成用，避免覆盖已有结构）。 */

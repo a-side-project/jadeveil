@@ -19,6 +19,8 @@ import { COLLISION_TEST_SOURCE } from "../tests/collision.test.mjs";
 import { ISLAND_ACCESS_TEST_SOURCE } from "../tests/island-access.test.mjs";
 import { BLOCKS } from "./world/blocks.js";
 import { installPixelUI } from "./ui/pixelui.js";
+import { attachPixelText } from "./ui/pixelfont.js";
+import { WORLDGUARD_TEST_SOURCE } from "../tests/worldguard.test.mjs";
 
 // 像素风界面必须在任何内容渲染前装好（含加载页）
 installPixelUI();
@@ -87,7 +89,6 @@ async function boot() {
 
   // 6. 交互
   const interaction = new Interaction(world, renderer.camera, player, renderer.scene);
-
   // 7. HUD
   const hud = new HUD(atlas, player, daynight, interaction, world);
   player.onLockChange = (locked) => {
@@ -164,6 +165,21 @@ async function boot() {
   const mist = new MistLayers(renderer.scene, [38, 46, 56, 70]);
   // 孔明灯：夜间升空的暖色光点
   const skyLanterns = new SkyLanterns(renderer.scene, 120, { baseY: 36, rise: 74, range: 130 });
+
+  // 虚空重生反馈：淡出 → 重生 → 淡入 + 提示
+  const voidFade = document.getElementById("voidfade");
+  let voidMsgApi = null;
+  player.onRespawn = () => {
+    if (!voidMsgApi) {
+      voidMsgApi = attachPixelText(document.getElementById("voidmsg"), {
+        color: "#ffe08a", scale: 3, tracking: 1, initial: "",
+      });
+    }
+    voidMsgApi.set("RETURNED FROM THE VOID");
+    voidFade.classList.add("on");
+    setTimeout(() => voidFade.classList.remove("on"), 420);
+  };
+  interaction.onBlocked = (msg) => hud.showItemName(msg);
 
   // 开场遮罩点击进入（先放一段 cinematic 巡游，再交还给玩家）
   document.getElementById("overlay").addEventListener("click", () => {
@@ -449,6 +465,11 @@ async function boot() {
     runIslandAccessTests() {
       // eslint-disable-next-line no-eval
       return eval(ISLAND_ACCESS_TEST_SOURCE);
+    },
+    /** 运行世界底/虚空保护测试。 */
+    runWorldGuardTests() {
+      // eslint-disable-next-line no-eval
+      return eval(WORLDGUARD_TEST_SOURCE);
     },
   };
   app.ready = true;
