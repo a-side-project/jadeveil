@@ -13,7 +13,7 @@ import * as THREE from "three";
 const WHITE = 0xf3f1ea; // 熊猫白
 const BLACK = 0x282a2f; // 熊猫黑
 const JADE = 0x54b795; // 玉带
-const WING = 0xdceef0; // 灵羽（飞行翅膀）
+const WING = 0xffdf8a; // 灵羽（飞行翅膀，暖金，与白身对比明显）
 const DARK = 0x1e2024;
 
 const mat = (color, rough = 0.74) =>
@@ -118,15 +118,15 @@ export class Avatar {
       this.legs.push(pivot);
     }
 
-    // 翅膀：飞行时显示并扇动（幻想元素）—— 宽扁、横向展开、向后掠
+    // 翅膀：飞行时显示并扇动 —— 大而明显、略上翘、向后掠
     this.wings = [];
     for (const s of [-1, 1]) {
       const pivot = new THREE.Group();
-      pivot.position.set(s * 0.30, 0.62, 0.02); // 肩胛
+      pivot.position.set(s * 0.28, 0.60, 0.02); // 肩胛
       body.add(pivot);
-      const wing = part(0.95, 0.10, 0.80, WING, 0.45); // 翼展 x 厚度 x 弦长
-      wing.position.set(s * 0.52, 0.10, 0.30); // 向外 + 略上 + 向后
-      wing.rotation.y = s * 0.25; // 后掠
+      const wing = part(1.40, 0.20, 1.00, WING, 0.42); // 翼展 x 厚度 x 弦长
+      wing.position.set(s * 0.72, 0.22, 0.38); // 向外 + 略上 + 向后
+      wing.rotation.y = s * 0.30; // 后掠
       wing.visible = false;
       pivot.add(wing);
       this.wings.push(pivot);
@@ -211,13 +211,12 @@ export class Avatar {
     const flying = this._fly > 0.02;
     for (const w of this.wings) w.visible = flying;
     if (flying) {
-      // 同向上下扇动（鸟翼），幅度更大、更灵动
-      const flap = Math.sin(t * 30) * 0.6;
-      this.wings[0].rotation.x = 0.15 + flap;
-      this.wings[1].rotation.x = 0.15 + flap;
-      // 轻微前后挥
-      this.wings[0].rotation.z = 0.12 + Math.sin(t * 30 + 1.2) * 0.08;
-      this.wings[1].rotation.z = -0.12 - Math.sin(t * 30 + 1.2) * 0.08;
+      // 同向上下扇动（鸟翼），上翘底角 + 大摆幅，清晰可见
+      const flap = Math.sin(t * 30) * 0.8;
+      this.wings[0].rotation.x = 0.45 + flap;
+      this.wings[1].rotation.x = 0.45 + flap;
+      this.wings[0].rotation.z = Math.sin(t * 30 + 1.2) * 0.08;
+      this.wings[1].rotation.z = -Math.sin(t * 30 + 1.2) * 0.08;
     }
 
     // ---------- 头部与躯干 ----------

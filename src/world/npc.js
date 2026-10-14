@@ -95,7 +95,20 @@ class Agent {
     this.waveAmount = 0;
 
     if (this.mode === "station") {
-      const [sx, sz] = opts.station;
+      let sx = opts.station[0], sz = opts.station[1];
+      // 若坐标落在水里，用导航网格找附近干燥地面（避免站岗的站在水池里）
+      if (this.nav && !this.nav.isWalkable(sx, sz)) {
+        for (let r = 2; r <= 10; r += 2) {
+          let found = false;
+          for (let a = 0; a < 16; a++) {
+            const th = (a / 16) * Math.PI * 2;
+            const nx = Math.round(sx + Math.cos(th) * r);
+            const nz = Math.round(sz + Math.sin(th) * r);
+            if (this.nav.isWalkable(nx, nz)) { sx = nx; sz = nz; found = true; break; }
+          }
+          if (found) break;
+        }
+      }
       const gy = this._groundY(sx, sz);
       this.station = new THREE.Vector3(sx, gy, sz);
       this.pos.copy(this.station);
@@ -288,7 +301,8 @@ class Agent {
       }
     }
 
-    if (speed > 0) this._move(dt, moveDirX, moveDirZ, speed);
+    // 始终执行垂直物理（重力/浮力/落地）——站岗/驻足也要落水会浮起来
+    this._move(dt, moveDirX, moveDirZ, speed);
 
     // 步态动画
     if (speed > 0) {
