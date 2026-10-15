@@ -3,8 +3,12 @@ node_modules/
 package-lock.json.bak
 
 # ---- build / cache ----
-dist/
-build/
+# 注意：这些必须锚定到仓库根目录（前导 `/`）。
+# 不锚定的 `build/` 会匹配任意深度的同名目录，曾把 vendor/three/build/
+# 整个忽略掉 —— 而那是 index.html importmap 指向的 three 运行时核心，
+# 导致 clone 后根本跑不起来。同类规则一律锚定。
+/dist/
+/build/
 .cache/
 .parcel-cache/
 .vite/
