@@ -43,6 +43,14 @@ scratch/
 .wrangler/
 .wrangler-dry-run/
 
-# 说明：
-#  screenshots/ 保留入库（基线快照需要可复现的视觉证据）
-#  node_modules/ 排除（用 npm install 还原）
+# ---- 本地验证 / 测试产物（不进版本库）----
+# 截图、录屏、测试输出等属于「一次性验证产物」：随时会重截、会膨胀体积、
+# 会污染 git 历史；它们只用于本地自查与向用户证明效果，不作为项目资产入库。
+screenshots/
+
+# 说明（本地产物 vs 项目资产）：
+#  screenshots/  排除 —— 视觉验证产物，非资产
+#  tests/        保留 —— 自动化测试「代码」是项目资产
+#  docs/         保留 —— 正式文档
+#  scripts/      保留 —— 构建/部署脚本
+#  node_modules/ 排除 —— 用 npm install 还原

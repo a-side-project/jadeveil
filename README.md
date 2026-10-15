@@ -61,7 +61,7 @@ pandaria-voxel/
 ├── serve.mjs               # 零依赖静态服务器
 ├── tests/
 │   └── collision.test.mjs  # 碰撞自动化测试（24 项断言）
-├── screenshots/            # 定稿截图
+├── screenshots/            # 本地验证截图（.gitignore，不入库）
 └── src/
     ├── main.js             # 入口：装配各模块 + 主循环
     ├── core/
@@ -604,7 +604,9 @@ window.__pandaria.runIslandAccessTests()
 
 ## 七、截图
 
-见 `screenshots/` 目录：
+截图属于**本地验证产物**（已列入 `.gitignore`，不进版本库）。下表记录了交付时实际截取过的画面；
+文件只存在于本地磁盘的 `screenshots/` 目录，运行 `npm run serve` 后可自行重截。
+本地产物 / 项目资产的划分准则见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。
 
 | 文件 | 内容 |
 | --- | --- |
