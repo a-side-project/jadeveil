@@ -20,6 +20,9 @@ const WATER_FOG_DEEP = new THREE.Color(0x0b2f3a);
 // 焦散偏青：阳光经过水体后剩下的颜色
 const CAUSTIC_TINT = new THREE.Color(0x8fe6ef);
 
+// 选择性泛光：发光体所在的渲染层（官 webgl_postprocessing_unreal_bloom_selective 做法）
+export const BLOOM_SCENE = 1;
+
 /* ---------------- 后处理：暗角 + 色彩分级 ---------------- */
 const GradeShader = {
   uniforms: {
@@ -294,15 +297,56 @@ export class Renderer {
   /* ---------------- 后处理 ---------------- */
   _setupComposer() {
     const size = new THREE.Vector2(window.innerWidth, window.innerHeight);
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.composer.setSize(window.innerWidth, window.innerHeight);
+    const pr = Math.min(window.devicePixelRatio, 2);
 
+    /* ---- 泛光专用 composer（官方做法）：渲染「变暗后的场景」并 bloom ----
+     * renderToScreen = false，结果留在 renderTarget2，供主 composer 的 mix 采样。
+     * 关键：用独立 composer 而不是手动调 UnrealBloomPass.render()，
+     * 后者需要 composer 帮它管理 buffer/renderToScreen，单独调用会弄乱渲染状态。
+     */
+    this.bloomRT = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      type: THREE.HalfFloatType,
+    });
+    this.bloomComposer = new EffectComposer(this.renderer, this.bloomRT);
+    this.bloomComposer.setPixelRatio(pr);
+    this.bloomComposer.setSize(window.innerWidth, window.innerHeight);
+    this.bloomComposer.renderToScreen = false;
+    this.bloomRenderPass = new RenderPass(this.scene, this.camera);
+    this.bloomComposer.addPass(this.bloomRenderPass);
+    this.bloom = new UnrealBloomPass(size, 1.0, 0.6, 0.0);
+    this.bloomComposer.addPass(this.bloom);
+
+    /* ---- 主 composer：renderPass → mix(加回泛光) → godray → grade → fxaa → output ---- */
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.setPixelRatio(pr);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
 
-    this.bloom = new UnrealBloomPass(size, 0.62, 0.72, 0.72);
-    this.composer.addPass(this.bloom);
+    // 官方 mix：base + bloomTexture * strength
+    this.bloomMix = new ShaderPass(
+      new THREE.ShaderMaterial({
+        uniforms: {
+          baseTexture: { value: null },
+          bloomTexture: { value: this.bloomComposer.renderTarget2.texture },
+          bloomStrength: { value: 1.0 },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D baseTexture;
+          uniform sampler2D bloomTexture;
+          uniform float bloomStrength;
+          varying vec2 vUv;
+          void main() {
+            gl_FragColor = (texture2D(baseTexture, vUv) + texture2D(bloomTexture, vUv) * bloomStrength);
+          }`,
+      }),
+      "baseTexture",
+    );
+    this.bloomMix.needsSwap = true;
+    this.composer.addPass(this.bloomMix);
 
     // 体积光：穿过竹林与屋檐的阳光束
     this.godrays = new ShaderPass(GodRayShader);
@@ -448,6 +492,69 @@ export class Renderer {
       emissive: 0xdfe9f2,
       emissiveIntensity: 0.28,
     });
+
+    /* ---------------- 选择性泛光（移植官方示例） ----------------
+     * 官方 webgl_postprocessing_unreal_bloom_selective 的核心：
+     *   每帧先 traverse 把「非泛光」对象换成黑材质，用一个独立 composer 渲染这份
+     *   变暗的场景并做 bloom；再还原材质，主 composer 渲染完整场景并把 bloom
+     *   纹理加回去。
+     *
+     * 本项目的差异：体素网格里「自发光面」与「普通面」在同一个 mesh 上（用
+     * aEmissive 顶点属性区分），无法按对象分层。所以体素网格不换成纯黑，
+     * 而是换成「只输出自发光」的着色器 —— 金瓦/灯笼/发光块仍会泛光。
+     */
+    this.bloomLayer = new THREE.Layers();
+    this.bloomLayer.set(BLOOM_SCENE);
+
+    // 非泛光 mesh → 纯黑（官方做法）
+    this._darkMaterial = new THREE.MeshBasicMaterial({ color: "black" });
+
+    // 体素网格 → 只输出自发光（aEmissive > 0 的面才亮）
+    this._glowMaterial = new THREE.ShaderMaterial({
+      vertexShader: /* glsl */ `
+        attribute float aEmissive;
+        varying float vEmissive;
+        void main() {
+          vEmissive = aEmissive;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */ `
+        varying float vEmissive;
+        void main() { gl_FragColor = vec4(vec3(vEmissive * 3.0), 1.0); }`,
+    });
+
+    this._savedMaterial = {};
+    this._savedVisible = {};
+
+    this._darkenNonBloomed = (obj) => {
+      if (!obj.material) return;
+      // 体素网格：换成自发光遮罩（保持金瓦/灯笼参与泛光）
+      if (obj.material === this.matOpaque || obj.material === this.matCutout) {
+        this._savedMaterial[obj.uuid] = obj.material;
+        obj.material = this._glowMaterial;
+        return;
+      }
+      if (this.bloomLayer.test(obj.layers)) return; // 发光体保留原样
+      // 粒子/精灵/线：泛光通道里直接隐藏（它们不写深度，不需要用黑材质挡光）
+      if (obj.isPoints || obj.isSprite || obj.isLine) {
+        this._savedVisible[obj.uuid] = obj.visible;
+        obj.visible = false;
+        return;
+      }
+      this._savedMaterial[obj.uuid] = obj.material;
+      obj.material = this._darkMaterial;
+    };
+
+    this._restoreMaterial = (obj) => {
+      if (this._savedMaterial[obj.uuid]) {
+        obj.material = this._savedMaterial[obj.uuid];
+        delete this._savedMaterial[obj.uuid];
+      }
+      if (obj.uuid in this._savedVisible) {
+        obj.visible = this._savedVisible[obj.uuid];
+        delete this._savedVisible[obj.uuid];
+      }
+    };
   }
 
   setAtlas(texture) {
@@ -510,9 +617,10 @@ export class Renderer {
     }
 
     // bloom：只让灯笼 / 金瓦 / 水面高光溢出，阈值保持较高
-    this.bloom.strength = 0.34 + st.night * 0.95 + st.warm * 0.22;
-    this.bloom.threshold = 0.86 - st.night * 0.30 - st.warm * 0.06;
+    // 选择性泛光：泛光通道里只剩发光体，阈值设 0；强度随昼夜
+    this.bloom.strength = 0.9 + st.night * 0.9 + st.warm * 0.3;
     this.bloom.radius = 0.55 + st.night * 0.30;
+    if (this.bloomMix) this.bloomMix.uniforms.bloomStrength.value = 1.0;
 
     if (sky) {
       sky.set(
@@ -576,6 +684,7 @@ export class Renderer {
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
     this.bloom.resolution.set(w, h);
+    if (this.bloomComposer) this.bloomComposer.setSize(w, h);
     if (this.fxaa) this.fxaa.uniforms.uResolution.value.set(1 / w, 1 / h);
     if (this.reflectRT) {
       this.reflectRT.setSize(
@@ -587,6 +696,13 @@ export class Renderer {
 
   render() {
     this.renderReflection();
+    // 选择性泛光（官方做法）：
+    //   1) 把非发光体换黑（体素网格换成只输出自发光的材质）
+    //   2) 独立 composer 只对这份「变暗场景」做 bloom
+    //   3) 还原材质，主 composer 渲染完整场景并把泛光加回去
+    this.scene.traverse(this._darkenNonBloomed);
+    this.bloomComposer.render();
+    this.scene.traverse(this._restoreMaterial);
     this.composer.render();
   }
 

@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { TextureAtlas } from "./world/atlas.js";
 import { WorldGenerator, CITY } from "./world/generator.js";
 import { ChunkManager } from "./world/chunkManager.js";
-import { Renderer } from "./core/renderer.js";
+import { Renderer, BLOOM_SCENE } from "./core/renderer.js";
 import { Sky } from "./core/sky.js";
 import { DayNight } from "./core/daynight.js";
 import { Player, CAMERA_LABELS } from "./player/controller.js";
@@ -185,6 +185,7 @@ async function boot() {
     });
     inst.count = positions.length;
     inst.instanceMatrix.needsUpdate = true;
+    inst.layers.enable(BLOOM_SCENE); // 灯笼光核：参与选择性泛光
     renderer.scene.add(inst);
     return { mesh: inst, mat, count: positions.length, positions };
   })();
@@ -239,6 +240,7 @@ async function boot() {
   const mist = new MistLayers(renderer.scene, [38, 46, 56, 70]);
   // 孔明灯：夜间升空的暖色光点
   const skyLanterns = new SkyLanterns(renderer.scene, 120, { baseY: 36, rise: 74, range: 130 });
+  skyLanterns.points.layers.enable(BLOOM_SCENE); // 夜空孔明灯：参与选择性泛光
   // 水中悬浮微粒（海洋雪）：仅潜水时可见
   const waterMotes = new WaterMotes(renderer.scene, 700, 13);
 
