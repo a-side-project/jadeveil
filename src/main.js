@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { TextureAtlas } from "./world/atlas.js";
 import { WorldGenerator, CITY } from "./world/generator.js";
 import { ChunkManager } from "./world/chunkManager.js";
-import { Renderer, BLOOM_SCENE } from "./core/renderer.js";
+import { Renderer, BLOOM_SCENE, GODRAY_SKY } from "./core/renderer.js";
 import { Sky } from "./core/sky.js";
 import { DayNight } from "./core/daynight.js";
 import { Player, CAMERA_LABELS } from "./player/controller.js";
@@ -76,6 +76,9 @@ async function boot() {
 
   // 3. 天空与昼夜
   const sky = new Sky(renderer.scene);
+  // 天空穹顶标记在体积光遮罩层：遮罩里只有它是亮的，其余几何体全黑，
+  // 于是光束只会来自「被建筑遮挡的天空」，不会被灯笼/金瓦/翅膀复制出残影。
+  sky.mesh.layers.enable(GODRAY_SKY);
   const daynight = new DayNight();
   daynight.sample(daynight.time);
   renderer.setSunDir(daynight.state.sunDir);

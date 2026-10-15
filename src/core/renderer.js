@@ -22,6 +22,8 @@ const CAUSTIC_TINT = new THREE.Color(0x8fe6ef);
 
 // 选择性泛光：发光体所在的渲染层（官 webgl_postprocessing_unreal_bloom_selective 做法）
 export const BLOOM_SCENE = 1;
+// 体积光的遮挡遮罩层：天空穹顶所在层（见 _renderGodRayMask）
+export const GODRAY_SKY = 2;
 
 /* ---------------- 后处理：暗角 + 色彩分级 ---------------- */
 const GradeShader = {
@@ -98,12 +100,16 @@ const GradeShader = {
 const GodRayShader = {
   uniforms: {
     tDiffuse: { value: null },
+    // 遮挡遮罩：只有天空是亮的、一切几何体全黑（见 _renderGodRayMask）。
+    // 光束必须从「被建筑遮挡的天空」推出来，绝不能从画面本身推 ——
+    // 从画面推的话，灯笼/金瓦/翅膀这些亮点会被径向模糊复制成一串等距残影。
+    tMask: { value: null },
     uSunScreen: { value: new THREE.Vector2(0.5, 0.8) },
     uStrength: { value: 0.55 },
     uDecay: { value: 0.94 },
     uDensity: { value: 0.45 },
-    uWeight: { value: 0.42 },
-    uThreshold: { value: 0.62 },
+    // 光束颜色：白天取太阳色（暖），水下改青
+    uSunTint: { value: new THREE.Color(0xfff0c8) },
     uNight: { value: 0 },
     // 水下程度：潜水时光束更强、更偏青（光经过水体长波先被吸收）
     uUnderwater: { value: 0 },
@@ -118,38 +124,51 @@ const GodRayShader = {
   fragmentShader: /* glsl */ `
     precision highp float;
     uniform sampler2D tDiffuse;
+    uniform sampler2D tMask;
     uniform vec2 uSunScreen;
     uniform float uStrength;
     uniform float uDecay;
     uniform float uDensity;
-    uniform float uWeight;
-    uniform float uThreshold;
+    uniform vec3 uSunTint;
     uniform float uNight;
     uniform float uUnderwater;
     varying vec2 vUv;
 
+    // 采样数从 24 提到 48：同样的光束长度、一半的步长，
+    // 离散台阶随之减半，再配合下面的逐像素抖动基本看不到分阶。
+    const int SAMPLES = 48;
+
     void main() {
       vec4 base = texture2D(tDiffuse, vUv);
-      vec2 delta = (vUv - uSunScreen) * uDensity / 24.0;
-      vec2 uv = vUv;
+      vec2 delta = (vUv - uSunScreen) * uDensity / float(SAMPLES);
+
+      // 逐像素抖动：沿射线方向把采样点整体偏移一个亚步长，
+      // 把残余的离散台阶打散成高频噪声，再由下游 FXAA 抹平。
+      float jitter = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
+      vec2 uv = vUv + delta * (jitter - 0.5);
+
       vec3 acc = vec3(0.0);
       float decay = 1.0;
-      for (int i = 0; i < 24; i++) {
+      float norm = 0.0;
+      for (int i = 0; i < SAMPLES; i++) {
         uv -= delta;
-        vec3 s = texture2D(tDiffuse, clamp(uv, 0.0, 1.0)).rgb;
-        // 只让亮部（天空、金瓦高光）产生光束
-        float lum = dot(s, vec3(0.2126, 0.7152, 0.0722));
-        s *= smoothstep(uThreshold, 1.0, lum);
-        acc += s * decay * uWeight;
+        acc += texture2D(tMask, clamp(uv, 0.0, 1.0)).rgb * decay;
+        norm += decay;
         decay *= uDecay;
       }
+      // 遮罩是二值的（天空 = 纯白，几何 = 纯黑），所以累加后归一化就得到
+      // 「这条射线通向太阳的路上，有多大比例没有被建筑挡住」——
+      // 一个 0..1 的量，与遮罩分辨率、天空亮度、色调映射曲线都无关。
+      // 旧版没归一化、直接阈值卡在亮度上，所以调亮度就会把整个效果调没。
+      acc /= max(norm, 1e-4);
+
       // 太阳在屏幕外或夜晚则减弱
       float onScreen = step(0.0, uSunScreen.x) * step(uSunScreen.x, 1.0)
                      * step(0.0, uSunScreen.y) * step(uSunScreen.y, 1.0);
       float amt = uStrength * onScreen * (1.0 - uNight * 0.92);
       // 水下：丁达尔光束更密集、更明显
       amt *= 1.0 + uUnderwater * 1.15;
-      vec3 tint = mix(vec3(1.0), vec3(0.55, 0.95, 0.92), uUnderwater);
+      vec3 tint = mix(uSunTint, vec3(0.55, 0.95, 0.92), uUnderwater);
       gl_FragColor = vec4(base.rgb + acc * amt * tint, base.a);
     }
   `,
@@ -348,8 +367,16 @@ export class Renderer {
     this.bloomMix.needsSwap = true;
     this.composer.addPass(this.bloomMix);
 
-    // 体积光：穿过竹林与屋檐的阳光束
+    // 体积光的遮挡遮罩：1/4 分辨率就够了（只用来做模糊）
+    this.godrayRT = new THREE.WebGLRenderTarget(
+      Math.max(2, Math.floor(window.innerWidth / 4)),
+      Math.max(2, Math.floor(window.innerHeight / 4)),
+      { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true },
+    );
+
+    // 体积光：穿过竹林与屋檐的阳光束（采样源是上面的遮罩，不是画面本身）
     this.godrays = new ShaderPass(GodRayShader);
+    this.godrays.uniforms.tMask.value = this.godrayRT.texture;
     this.composer.addPass(this.godrays);
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.grade);
@@ -555,6 +582,94 @@ export class Renderer {
         delete this._savedVisible[obj.uuid];
       }
     };
+
+    /* ---------------- 体积光的「遮挡遮罩」材料 ----------------
+     * 与泛光那套完全独立（各自一份 saved 表，互不干扰）。
+     */
+    this.godraySkyLayer = new THREE.Layers();
+    this.godraySkyLayer.set(GODRAY_SKY);
+    this._godrayBlack = new THREE.MeshBasicMaterial({ color: "black" });
+    // 天空在遮罩里要变成「纯白的遮挡板」：遮罩是二值的，光束强度才由遮挡决定，
+    // 而不是被天空自身的亮度与色调映射曲线左右。
+    // （天空穹顶自己就是 depthWrite/depthTest 全关 + BackSide，这里保持一致。）
+    this._godrayWhite = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+    });
+
+    this._grSavedMaterial = {};
+    this._grSavedVisible = {};
+
+    this._darkenForGodRay = (obj) => {
+      if (!obj.material) return;
+      // 天空：换成纯白遮挡板（保留原材质，渲染完恢复）
+      if (obj.layers.test(this.godraySkyLayer)) {
+        this._grSavedMaterial[obj.uuid] = obj.material;
+        obj.material = this._godrayWhite;
+        return;
+      }
+      // 半透明体（水面、云海、雾带）与粒子一律隐藏，而不是涂黑 ——
+      // 涂黑的话它们会在遮罩里把天空挡住，光束会在这些区域整片消失。
+      if (obj.isPoints || obj.isSprite || obj.isLine || obj.material.transparent) {
+        this._grSavedVisible[obj.uuid] = obj.visible;
+        obj.visible = false;
+        return;
+      }
+      this._grSavedMaterial[obj.uuid] = obj.material;
+      obj.material = this._godrayBlack;
+    };
+
+    this._restoreForGodRay = (obj) => {
+      if (this._grSavedMaterial[obj.uuid]) {
+        obj.material = this._grSavedMaterial[obj.uuid];
+        delete this._grSavedMaterial[obj.uuid];
+      }
+      if (obj.uuid in this._grSavedVisible) {
+        obj.visible = this._grSavedVisible[obj.uuid];
+        delete this._grSavedVisible[obj.uuid];
+      }
+    };
+  }
+
+  /**
+   * 渲染「遮挡遮罩」：只有天空是亮的，一切实体几何都是黑的。
+   *
+   * 体积光必须从这份遮罩推出来，而不是从最终画面推出来。
+   * 旧做法是拿最终画面直接做径向模糊，于是画面里每一个亮点（灯笼、金瓦高光、
+   * 翅膀符文）都会被复制成一串等距残影 —— 这就是「发光体上总挂着一条很重复的
+   * 残影」的根因，也是之前调阈值／调强度治不好的原因：残影不是亮度问题，
+   * 是采样源错了。
+   *
+   * 换成遮罩后：发光体在遮罩里是纯黑，不可能产生任何光束；光束只来自
+   * 「被建筑遮挡的天空」，这才是体积光本来的物理含义。
+   */
+  _renderGodRayMask() {
+    const r = this.renderer;
+    if (!this.godrayRT) return;
+    const prevTarget = r.getRenderTarget();
+    const prevAutoClear = r.autoClear;
+    const prevClear = new THREE.Color();
+    r.getClearColor(prevClear);
+    const prevClearAlpha = r.getClearAlpha();
+    // 遮罩里看不见阴影，重算一遍阴影贴图等于白花一倍开销
+    const prevShadowAuto = r.shadowMap.autoUpdate;
+
+    this.scene.traverse(this._darkenForGodRay);
+    r.shadowMap.autoUpdate = false;
+    r.autoClear = true;
+    r.setClearColor(0x000000, 1);
+    r.setRenderTarget(this.godrayRT);
+    r.clear(true, true, false);
+    r.render(this.scene, this.camera);
+    r.setRenderTarget(prevTarget);
+
+    r.shadowMap.autoUpdate = prevShadowAuto;
+    r.autoClear = prevAutoClear;
+    r.setClearColor(prevClear, prevClearAlpha);
+    this.scene.traverse(this._restoreForGodRay);
   }
 
   setAtlas(texture) {
@@ -632,10 +747,13 @@ export class Renderer {
     // 体积光参数随昼夜
     if (this.godrays) {
       this.godrays.uniforms.uNight.value = st.night;
-      this.godrays.uniforms.uStrength.value = 0.22 + st.warm * 0.6;
-      // 阈值抬高：只让天空/太阳（近白）产生体积光，不再把花瓣/微粒等亮色小点
-      // 当成光源沿太阳方向拖成残影。
-      this.godrays.uniforms.uThreshold.value = 0.80 + st.night * 0.15;
+      // 累积量已归一化到 0..1（“到太阳的路上没被挡住的比例”），所以强度
+      // 直接就是「最多加多少光」，不再需要用高阈值去躲开发光体。
+      // 这个系数是体积光唯一的「调子」旋钮：旧阀值卡在天空亮度上，
+      // 实际上把光束本身也一起卡没了（旧版全图贡献仅 1% 像素），
+      // 这里刻意取小值，使整体亮度与之前相近 —— 只去掉残影，不改变画面观感。
+      this.godrays.uniforms.uStrength.value = 0.04 + st.warm * 0.10;
+      this.godrays.uniforms.uSunTint.value.copy(st.sunColor);
       // updateWaterView() 需要它来算水下阈值，必须存下来
       this._nightFactor = st.night;
     }
@@ -685,6 +803,7 @@ export class Renderer {
     this.composer.setSize(w, h);
     this.bloom.resolution.set(w, h);
     if (this.bloomComposer) this.bloomComposer.setSize(w, h);
+    if (this.godrayRT) this.godrayRT.setSize(Math.max(2, Math.floor(w / 4)), Math.max(2, Math.floor(h / 4)));
     if (this.fxaa) this.fxaa.uniforms.uResolution.value.set(1 / w, 1 / h);
     if (this.reflectRT) {
       this.reflectRT.setSize(
@@ -696,6 +815,8 @@ export class Renderer {
 
   render() {
     this.renderReflection();
+    // 体积光的遮挡遮罩：必须在主画面之前重算（它会把场景里的材质临时换掉）
+    this._renderGodRayMask();
     // 选择性泛光（官方做法）：
     //   1) 把非发光体换黑（体素网格换成只输出自发光的材质）
     //   2) 独立 composer 只对这份「变暗场景」做 bloom
@@ -814,13 +935,9 @@ export class Renderer {
     }
 
     if (this.waterUniforms) this.waterUniforms.uUnderwater.value = b;
+    // 水下散射更强，光束更明显（强度由 shader 里的 uUnderwater 项放大，
+    // 不再需要下调亮度阈值 —— 遮罩是二值的，阈值那套已经不需要了）
     if (this.godrays) this.godrays.uniforms.uUnderwater.value = b;
-
-    // 水下看清暗对比降低、光束阈值下调 —— 水里到处都是散射光
-    if (this.godrays) {
-      const base = 0.80 + this._nightFactor * 0.15;
-      this.godrays.uniforms.uThreshold.value = base * (1 - b) + 0.35 * b;
-    }
   }
 
   /** 初始化反射用的渲染目标与镜面相机。 */
