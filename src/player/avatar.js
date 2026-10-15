@@ -9,11 +9,11 @@
  * 游泳时身体会真实地放平（俯冲成水平），双臂做自由泳划水，双腿打水。
  */
 import * as THREE from "three";
+import { createWings } from "./wings.js";
 
 const WHITE = 0xf3f1ea; // 熊猫白
 const BLACK = 0x282a2f; // 熊猫黑
 const JADE = 0x54b795; // 玉带
-const WING = 0xffdf8a; // 灵羽（飞行翅膀，暖金，与白身对比明显）
 const DARK = 0x1e2024;
 
 const mat = (color, rough = 0.74) =>
@@ -118,19 +118,11 @@ export class Avatar {
       this.legs.push(pivot);
     }
 
-    // 翅膀：飞行时显示并扇动 —— 大而明显、略上翘、向后掠
-    this.wings = [];
-    for (const s of [-1, 1]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(s * 0.28, 0.60, 0.02); // 肩胛
-      body.add(pivot);
-      const wing = part(1.40, 0.20, 1.00, WING, 0.42); // 翼展 x 厚度 x 弦长
-      wing.position.set(s * 0.72, 0.22, 0.38); // 向外 + 略上 + 向后
-      wing.rotation.y = s * 0.30; // 后掠
-      wing.visible = false;
-      pivot.add(wing);
-      this.wings.push(pivot);
-    }
+    // 灵翼：巨大（翼展 WING_SPAN = 5.8 格）、像素贴图、接入选择性泛光。
+    // 几何、贴图与扇动曲线都在 wings.js，量化常量集中在那里。
+    this.wingRig = createWings();
+    this.wingRig.setVisible(false);
+    body.add(this.wingRig.group);
   }
 
   /* ---------------- 第一人称手部 ---------------- */
@@ -207,17 +199,13 @@ export class Avatar {
     legL.rotation.x = damp(legL.rotation.x, lerp(gait * 0.78, kick * 0.42, swim), 9, dt);
     legR.rotation.x = damp(legR.rotation.x, lerp(-gait * 0.78, -kick * 0.42, swim), 9, dt);
 
-    // ---------- 翅膀 ----------
+    // ---------- 灵翼 ----------
+    // 1.25 Hz、±0.72 rad 的大幅扇动。
+    // （旧版是 sin(t * 30) ≈ 4.8 Hz 的高频抖动，且用绕 X 旋转驱动沿 X 伸出的
+    //   翅膀 —— 绕 X 转只会让羽面自转，翼尖几乎不动，所以「看着不扇」。）
     const flying = this._fly > 0.02;
-    for (const w of this.wings) w.visible = flying;
-    if (flying) {
-      // 同向上下扇动（鸟翼），上翘底角 + 大摆幅，清晰可见
-      const flap = Math.sin(t * 30) * 0.8;
-      this.wings[0].rotation.x = 0.45 + flap;
-      this.wings[1].rotation.x = 0.45 + flap;
-      this.wings[0].rotation.z = Math.sin(t * 30 + 1.2) * 0.08;
-      this.wings[1].rotation.z = -Math.sin(t * 30 + 1.2) * 0.08;
-    }
+    this.wingRig.setVisible(flying);
+    if (flying) this.wingRig.update(t);
 
     // ---------- 头部与躯干 ----------
     // 抬头换气：游泳时头略抬，避免整张脸埋进水里
