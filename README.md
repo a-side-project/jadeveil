@@ -398,11 +398,10 @@ feature/visual-impact     → 后续视觉优化分支
 放弃合成音色 —— 现在播放**真实录制的音频素材**（CC0 / CC-BY，详见 `audio/CREDITS.md`），
 全部打包进仓库、离线可用、零运行时外链。
 
-**背景音乐**：`audio/music/theme.ogg` —— "Wuxia2 (Orchestra)" by **PeriTune**
-（CC BY 4.0，中华风史诗管弦）。同目录另有 3 首同风格备选
-（`theme-alt-wuxia1.ogg` / `theme-alt-wuxia2-guzheng.ogg` / `theme-alt-wuxia3.ogg`），
-切换 = 把选定曲目重命名为 `theme.ogg` 即可。均为作曲者提供的循环版，经 `<audio>` +
-MediaElementSource 接入 Web Audio 图，走音乐总线（独立开关与音量）。详见 `audio/CREDITS.md`。
+**背景音乐**：已移除（用户最终决定只保留音效）。当前不加载、不播放任何 BGM；
+音乐开关/音量设置项暂留，界面标注 **"MUSIC (REMOVED)"**。将来要恢复，只需在
+`src/audio/audioManager.js` 的 `_setupMusic()` 里改回并放回一个 `audio/music/theme.ogg`。
+音效仍走 Web Audio 图（独立开关与音量），详见 `audio/CREDITS.md`。
 
 **音效**（39 个文件，按材质/场景分类）：
 - 破坏/放置：石（挖矿音）、木、玻璃、金属、植物、土

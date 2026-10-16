@@ -109,7 +109,7 @@ export class HUD {
     say("l-audio", "AUDIO", { color: C.gold, scale: 1 });
     say("l-musicvol", "MUSIC VOLUME", { scale: 1 });
     say("l-sfxvol", "SFX VOLUME", { scale: 1 });
-    say("l-music", "MUSIC", { scale: 1 });
+    say("l-music", "MUSIC (REMOVED)", { scale: 1 });
     say("l-sfx", "SOUND FX", { scale: 1 });
     document.querySelector('#settings .tiers button[data-q="high"]')?.classList.add("on");
 
@@ -279,7 +279,8 @@ export class HUD {
     const a = this.audio;
     if (!a) return;
     const s = a.settings;
-    this.dyn.musicvol?.set(s.musicOn ? Math.round(s.musicVol * 100) + "%" : "OFF");
+    // BGM 已移除：音乐读数恒为 OFF，不再显示音量百分比
+    this.dyn.musicvol?.set("OFF");
     this.dyn.sfxvol?.set(s.sfxOn ? Math.round(s.sfxVol * 100) + "%" : "OFF");
   }
 

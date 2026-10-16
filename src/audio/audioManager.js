@@ -113,15 +113,10 @@ export class AudioManager {
   }
 
   _setupMusic() {
-    const el = new Audio();
-    el.src = `${BASE}/music/theme.ogg`;
-    el.loop = true;
-    el.preload = "auto";
-    // 注意：不要设 crossOrigin。音乐与页面同源，设了会把请求变成 CORS 请求，
-    // 而 Workers 静态资源不返回 ACAO 头，导致 <audio> 拒绝加载。
-    const src = this.ctx.createMediaElementSource(el);
-    src.connect(this.musicBus);
-    this._musicEl = el;
+    // BGM 已移除（用户最终决定只保留音效）。不再创建 <audio>、不加载
+    // theme.ogg、不播放任何背景音乐。保留本方法与 musicBus，将来要恢复时
+    // 在这里改回即可。_applyMusic() 会因 _musicEl 为 null 而静默跳过。
+    this._musicEl = null;
   }
 
   /** 用户手势后：确保上下文运行并开始放音乐。 */
