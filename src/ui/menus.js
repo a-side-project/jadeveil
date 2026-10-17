@@ -80,6 +80,14 @@ export class Menus {
     const menu = document.createElement("div");
     menu.className = "menu";
     card.appendChild(menu);
+    // 品牌 logo（与 favicon / 应用图标同一份像素数据）
+    const logo = document.createElement("img");
+    logo.src = "/favicon.svg";
+    logo.alt = "";
+    logo.width = 88;
+    logo.height = 88;
+    logo.style.cssText = "image-rendering: pixelated; margin-bottom: 6px;";
+    menu.appendChild(logo);
     const title = document.createElement("div");
     setPixelText(title, BRAND, { color: C.gold, outline: C.goldDeep, shadow: "#000", scale: 7, tracking: 2, center: true });
     menu.appendChild(title);
@@ -94,6 +102,7 @@ export class Menus {
     menu.appendChild(this.continueMeta);
     this.btnNew = this._btn(menu, "NEW GAME", () => this._newGame());
     this._btn(menu, "LOAD SAVE FILE", () => this.cb.onLoadFile());
+    this.install = [this._installEntry(menu)];
     this.titleMsg = document.createElement("div");
     this.titleMsg.className = "msg";
     menu.appendChild(this.titleMsg);
@@ -152,6 +161,7 @@ export class Menus {
     this._btn(menu, "SAVE GAME", () => this.cb.onSave());
     this._btn(menu, "EXPORT SAVE FILE", () => this.cb.onExport());
     this._btn(menu, "LOAD SAVE FILE", () => this.cb.onLoadFile());
+    this.install.push(this._installEntry(menu));
     this._btn(menu, "SETTINGS", () => this.cb.onSettings());
     this.btnControls = this._btn(menu, "CONTROLS", () => this._toggleControls());
     this._btn(menu, "SAVE AND QUIT TO TITLE", () => this.cb.onQuitTitle());
@@ -174,6 +184,27 @@ export class Menus {
     pause.addEventListener("click", (e) => {
       if (e.target === pause) this.cb.onResume();
     });
+  }
+
+  /** 「安装为应用」入口：一键安装按钮 + iOS 的手动添加提示，默认都隐藏。 */
+  _installEntry(menu) {
+    const btn = this._btn(menu, "INSTALL APP", () => this.cb.onInstall?.(), C.jade);
+    const row = btn.parentElement;
+    row.style.display = "none";
+    const hint = document.createElement("div");
+    hint.className = "meta";
+    hint.style.display = "none";
+    setPixelText(hint, "SAFARI: SHARE  >  ADD TO HOME SCREEN", { color: C.jade, scale: 1, center: true });
+    menu.appendChild(hint);
+    return { row, hint };
+  }
+
+  /** @param {"installed"|"prompt"|"ios"|"unavailable"} state */
+  setInstallState(state) {
+    for (const { row, hint } of this.install) {
+      row.style.display = state === "prompt" ? "" : "none";
+      hint.style.display = state === "ios" ? "" : "none";
+    }
   }
 
   _toggleControls() {

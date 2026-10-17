@@ -74,6 +74,9 @@ const G = {
   "→": ["00000", "00100", "00010", "11111", "00010", "00100", "00000"],
 };
 
+/** 字模表（品牌脚本 scripts/brand.mjs 也用它生成像素字标）。 */
+export const GLYPHS = G;
+
 export const GLYPH_W = 5;
 export const GLYPH_H = 7;
 
