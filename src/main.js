@@ -53,10 +53,12 @@ import { InventoryUI } from "./ui/inventoryUI.js";
 import { Menus } from "./ui/menus.js";
 import { installUIScale } from "./ui/uiScale.js";
 import { buildTrainingYard, YARD } from "./world/trainingYard.js";
+import { installPWA, pwa } from "./game/pwa.js";
 
 // 像素风界面必须在任何内容渲染前装好（含加载页）
 installPixelUI();
 installUIScale();
+installPWA();
 
 const canvas = document.createElement("canvas");
 canvas.id = "scene";
@@ -374,6 +376,7 @@ async function boot() {
       menus.pauseMessage(ok ? "SAVE FILE DOWNLOADED" : "NOTHING TO EXPORT", ok ? "#6fc0ae" : "#ff7a6a");
     },
     onSettings: () => hud.toggleSettings(),
+    onInstall: () => pwa.install(),
     onQuitTitle: async () => {
       // 重载回标题：世界差量必须重放在干净的生成世界上，重载最稳
       await save.save();
@@ -381,6 +384,7 @@ async function boot() {
       location.reload();
     },
   });
+  pwa.onChange((st) => menus.setInstallState(st));
   save.onSaved = () => {
     if (state.mode === "play") hud.showItemName("GAME SAVED");
   };

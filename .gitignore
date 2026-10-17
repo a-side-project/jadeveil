@@ -58,3 +58,5 @@ screenshots/
 #  docs/         保留 —— 正式文档
 #  scripts/      保留 —— 构建/部署脚本
 #  node_modules/ 排除 —— 用 npm install 还原
+.vercel/
+.vercel

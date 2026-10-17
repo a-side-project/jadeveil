@@ -1,0 +1,14 @@
+# 只影响 Vercel 的上传范围（与 .assetsignore 对 Cloudflare 的作用相同）。
+# 线上需要：index.html、src/、vendor/、tests/（main.js import 测试源码）、audio/、
+#          icons/、pwa/、favicon.*、apple-touch-icon.png、og-image.png、manifest.webmanifest、sw.js
+node_modules/
+screenshots/
+docs/
+scripts/
+.wrangler/
+.wrangler-dry-run/
+*.md
+package-lock.json
+wrangler.jsonc
+.assetsignore
+.DS_Store

@@ -2,8 +2,38 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <title>JADEVEIL — A Voxel Realm of Mist and Jade</title>
+    <meta name="description" content="A Minecraft-styled single-player RPG in the browser: a Chinese voxel capital of mist and jade, JJ in a red hood and a rideable Ender Dragon. Installable, plays offline." />
+    <meta name="application-name" content="JADEVEIL" />
+    <meta name="theme-color" content="#0b1014" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- 图标：全部由 scripts/brand.mjs 从同一份像素 logo 生成 -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- 安装到 iOS / iPadOS 主屏幕后以全屏应用运行 -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="JADEVEIL" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- 分享卡（Open Graph / Twitter） -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="JADEVEIL" />
+    <meta property="og:title" content="JADEVEIL — A Voxel Realm of Mist and Jade" />
+    <meta property="og:description" content="A Minecraft-styled single-player RPG: a Chinese voxel capital, JJ in a red hood and a rideable Ender Dragon." />
+    <meta property="og:url" content="https://jadeveil.xiaoa.name/" />
+    <meta property="og:image" content="https://jadeveil.xiaoa.name/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="JADEVEIL — a pixel pagoda under a jade moon beside the pixel wordmark" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://jadeveil.xiaoa.name/og-image.png" />
+    <link rel="canonical" href="https://jadeveil.xiaoa.name/" />
     <style>
       :root {
         --gold: #e8b44a;
@@ -140,6 +170,7 @@
         transition: opacity 0.5s ease, visibility 0.5s;
       }
       #loading.hidden { opacity: 0; visibility: hidden; }
+      #loading .load-logo { image-rendering: pixelated; margin-bottom: -6px; }
       #loading .bar { width: 320px; height: 18px; display: flex; align-items: stretch; padding: 3px; }
       #loading .bar i { display: block; height: 100%; width: 0%; transition: width 0.3s; }
     </style>
@@ -148,6 +179,7 @@
     <div id="voidfade"><div class="msg" id="voidmsg"></div></div>
 
     <div id="loading">
+      <img class="load-logo" src="/favicon.svg" width="96" height="96" alt="" />
       <div class="glyph" id="load-glyph"></div>
       <div class="bar"><i id="loadbar"></i></div>
       <div class="msg" id="loadmsg"></div>

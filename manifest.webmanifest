@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "JADEVEIL — A Voxel Realm of Mist and Jade",
+  "short_name": "JADEVEIL",
+  "description": "A Minecraft-styled single-player RPG: a Chinese voxel capital, JJ in a red hood and a rideable Ender Dragon. Plays offline once installed.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#05070a",
+  "theme_color": "#0b1014",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "screenshots": [
+    { "src": "/pwa/screenshot-dragon.jpg", "sizes": "1600x900", "type": "image/jpeg", "form_factor": "wide", "label": "Riding the Ender Dragon over the capital at dusk" },
+    { "src": "/pwa/screenshot-market.jpg", "sizes": "1600x900", "type": "image/jpeg", "form_factor": "wide", "label": "The lantern avenue with residents and the jade blade" }
+  ]
+}
