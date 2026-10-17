@@ -27,7 +27,7 @@
 | 源码 | `src/**`、`index.html`、`serve.mjs` |
 | 测试「代码」 | `tests/*.test.mjs` |
 | 构建 / 部署脚本 | `scripts/vendor-three.mjs`、`wrangler.jsonc` |
-| 正式文档 | `README.md`、`docs/*.md`、`CONTRIBUTING.md`、`DEPLOY.md` |
+| 正式文档 | `README.md`、`docs/*.md`（含 `docs/DEPLOY.md`、`docs/DEVLOG.md`）、`CONTRIBUTING.md`、`THIRD_PARTY_NOTICES.md` |
 | 运行时依赖的二进制素材 | `audio/**`（游戏会加载）、`vendor/three/**`（离线依赖） |
 | 锁文件 | `package-lock.json` |
 
