@@ -91,6 +91,19 @@ export const RPG_TEST_SOURCE = `
     return { hp: health.hp, safeFallCleared: player.safeFall === false, pass: health.hp === 20 && player.safeFall === false };
   });
 
+  // 2b. 回归：从高空瞬移（读档 / 重生 / 传送）到地面不算坠落
+  run("Teleporting from high altitude to the ground costs 0 HP", () => {
+    const g = findGround();
+    reset(g.x + 0.5, 140, g.z + 0.5);
+    player.flying = true;
+    step(5);
+    player.flying = false;
+    P.teleport(g.x + 0.5, g.y + 1.2, g.z + 0.5);
+    let i = 0;
+    while (!player.onGround && i++ < 300) step(1);
+    return { hp: health.hp, pass: player.onGround && health.hp === 20 };
+  });
+
   // 3. 溺水：按住下潜 13 秒 → 氧气耗尽、开始掉血
   run("Drowning: holding a dive for 13 s empties air and costs HP", () => {
     const w = findDeepWater();

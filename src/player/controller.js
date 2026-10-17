@@ -803,6 +803,15 @@ export class Player {
     return new THREE.Vector3(px + 0.5, CH - 20, pz + 0.5);
   }
 
+  /**
+   * 瞬移后清掉「下落起点」：摔落伤害按 (最高点 - 落地点) 计算，
+   * 不重置的话从高处瞬移到地面（读档 / 重生 / 传送）会被当成一次致命坠落。
+   */
+  resetFall() {
+    this._peakY = this.position.y;
+    this.safeFall = false;
+  }
+
   /** 重生到安全点（掉出世界时调用）。 */
   respawn() {
     const p = this.findSafeSpawn(this.world, 0, 84);
@@ -811,6 +820,7 @@ export class Player {
     this.onGround = true;
     this.flying = false;
     this.voidRespawns = (this.voidRespawns || 0) + 1;
+    this.resetFall();
     if (this.onRespawn) this.onRespawn(p);
     return p;
   }
@@ -821,6 +831,7 @@ export class Player {
     this.position.copy(p);
     this.velocity.set(0, 0, 0);
     this.onGround = true;
+    this.resetFall();
     this.yaw = Math.PI;
     this.targetYaw = Math.PI;
     this.pitch = -0.05;

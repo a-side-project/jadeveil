@@ -315,6 +315,7 @@ async function boot() {
       player.pitch = player.targetPitch = d.player.pitch || 0;
       player.mode = d.player.mode || "first";
       avatar.setMode(player.mode);
+      player.resetFall();
       // 存档点若已被挖空 / 卡在方块里，回到安全出生点
       if (player.collides(x, y, z)) player.spawnAt(world);
     }
@@ -644,6 +645,7 @@ async function boot() {
 
     // 化身：姿势由状态驱动
     if (player.mode !== "debug") avatar.setMode(player.mode);
+    const debugShot = player.mode === "debug";
     if (!mount.active) {
       avatar.placeTo(player.position);
       avatar.group.rotation.z = 0;
@@ -732,6 +734,8 @@ async function boot() {
     waterMotes.update(elapsed, renderer.camera, renderer.underwaterBlend);
     fx.update(dt);
 
+    // 固定机位（截图 / 验收）不显示第一人称视模型
+    if (debugShot) avatar.viewArms.visible = false;
     // 标题页：HUD 与第一人称视模型都不显示
     document.body.classList.toggle("in-title", state.mode === "title");
     if (state.mode === "title") avatar.viewArms.visible = false;
@@ -827,6 +831,7 @@ async function boot() {
     teleport(x, y, z, yaw, pitch) {
       player.position.set(x, y, z);
       player.velocity.set(0, 0, 0);
+      player.resetFall();
       if (yaw !== undefined) {
         player.yaw = yaw;
         player.targetYaw = yaw;

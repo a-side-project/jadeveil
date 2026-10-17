@@ -20,7 +20,8 @@ export function installUIScale() {
       overflow-y: auto;
       scrollbar-width: none;
     }
-    body.in-title #hud { display: none !important; }
+    /* 标题页只留标题卡片：HUD、居民气泡、伤害数字一律隐藏 */
+    body.in-title #hud, body.in-title #npc-bubbles, body.in-title #dmglayer { display: none !important; }
   `;
   document.head.appendChild(style);
 

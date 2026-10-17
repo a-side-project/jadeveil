@@ -317,6 +317,7 @@ export class NPCManager {
   /* ---------------- 气泡 ---------------- */
   _buildBubbles() {
     this.bubbleLayer = document.createElement("div");
+    this.bubbleLayer.id = "npc-bubbles";
     // 层级低于 HUD（#hud z-index 10）：气泡永远不会盖住血条和技能栏
     this.bubbleLayer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:9;overflow:hidden;";
     document.body.appendChild(this.bubbleLayer);
