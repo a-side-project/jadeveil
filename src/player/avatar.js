@@ -1,235 +1,219 @@
 /**
- * 玩家化身 —— 体素风的熊猫人武僧。
+ * 玩家化身 —— 杰杰（JJ）：Minecraft 标准人形 + 64×64 皮肤。
  *
  * 两套表现：
- *   · body    第三人称的全身模型，站在世界坐标里
- *   · arms    第一人称的手部视模型，挂在相机上
+ *   · group     第三人称全身模型（skin.js 的 MC 人形骨架），站在世界坐标里
+ *   · viewArms  第一人称视模型：右臂 + 手持物，挂在相机上（与 MC 一致，始终可见）
  *
- * 姿势由状态驱动：站立 / 行走 / 奔跑 / 游泳 / 飞行 / 坠落。
- * 游泳时身体会真实地放平（俯冲成水平），双臂做自由泳划水，双腿打水。
+ * 姿势由状态驱动：站立 / 行走 / 奔跑 / 游泳 / 骑乘 / 挥击。
+ * 游泳时身体真实地放平，双臂自由泳划水，双腿打水；
+ * 骑乘末影龙时跨坐（双腿前伸外张、身体随龙俯仰）。
  */
 import * as THREE from "three";
-import { createWings } from "./wings.js";
-
-const WHITE = 0xf3f1ea; // 熊猫白
-const BLACK = 0x282a2f; // 熊猫黑
-const JADE = 0x54b795; // 玉带
-const DARK = 0x1e2024;
-
-const mat = (color, rough = 0.74) =>
-  new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.05 });
-
-/** 造一个方块网格，pivot 在给定锚点，便于绕关节旋转。 */
-function part(w, h, d, color, rough) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color, rough));
-  m.castShadow = true;
-  return m;
-}
+import { buildHumanoid, paintJJSkin, skinTexture, skinMaterials, partGeometry, PX } from "./skin.js";
+import { createItemModel } from "../game/itemModels.js";
 
 const lerp = (a, b, k) => a + (b - a) * k;
 /** 帧率无关的阻尼插值。 */
 const damp = (a, b, k, dt) => lerp(a, b, 1 - Math.exp(-k * dt));
 
+/** 挥击动作时长（秒）—— 攻击 / 挖掘 / 放置共用。 */
+const SWING_TIME = 0.28;
+
+// 第一人称右臂的静止位姿（相机空间）：从屏幕右下角伸出、手掌朝前
+const FP_POS = [0.56, -0.62, -0.86];
+const FP_ROT = [1.5, 0.16, 0.12];
+const FP_SCALE = 0.85;
+
 export class Avatar {
-  constructor() {
+  constructor(atlas) {
+    this.atlas = atlas;
     this.time = 0;
     this._swim = 0; // 游泳程度 0..1（平滑）
-    this._fly = 0;
+    this._ride = 0; // 骑乘程度 0..1
     this._pose = 0; // 迈步相位
-    this._fp = true; // 是否第一人称（决定手部视模型是否可见）
+    this._fp = true; // 是否第一人称
+    this._swingT = 1; // 挥击进度 0..1（1 = 未在挥击）
+    this.heldDef = null;
 
-    this.group = new THREE.Group();
+    this.texture = skinTexture(paintJJSkin());
+    this.materials = skinMaterials(this.texture);
+
+    const rig = buildHumanoid(this.materials);
+    this.group = rig.group;
     this.group.name = "avatar";
-    this._buildBody();
+    this.body = rig.body;
+    this.head = rig.head;
+    this.arms = rig.arms;
+    this.legs = rig.legs;
+
+    // 第三人称手持物：挂在右手掌心（右臂 pivot 下 10px）
+    this.handR = new THREE.Group();
+    this.handR.position.set(0, -10 * PX, -1 * PX);
+    this.arms[1].add(this.handR);
 
     this.viewArms = new THREE.Group();
     this.viewArms.name = "viewArms";
-    this._buildArms();
+    this._buildViewArm();
   }
 
-  /* ---------------- 第三人称全身 ---------------- */
+  /* ---------------- 第一人称右臂 ---------------- */
 
-  _buildBody() {
-    // body 的 pivot 在髋部（y=0.72），方便整体放平/俯冲
-    const body = new THREE.Group();
-    body.position.y = 0.72;
-    this.body = body;
-    this.group.add(body);
-
-    // 躯干
-    const torso = part(0.62, 0.68, 0.36, WHITE);
-    torso.position.y = 0.34;
-    body.add(torso);
-
-    // 玉带：腰间的青玉腰带，点明门派
-    const sash = part(0.66, 0.10, 0.40, JADE, 0.45);
-    sash.position.y = 0.04;
-    body.add(sash);
-
-    // 头
-    const head = new THREE.Group();
-    head.position.y = 0.68;
-    this.head = head;
-    body.add(head);
-
-    const skull = part(0.40, 0.38, 0.38, WHITE);
-    skull.position.y = 0.19;
-    head.add(skull);
-    // 黑眼圈
-    const patchL = part(0.13, 0.13, 0.03, BLACK);
-    patchL.position.set(-0.10, 0.22, -0.20);
-    head.add(patchL);
-    const patchR = patchL.clone();
-    patchR.position.x = 0.10;
-    head.add(patchR);
-    // 耳朵
-    const earL = part(0.12, 0.12, 0.05, BLACK);
-    earL.position.set(-0.19, 0.38, 0);
-    head.add(earL);
-    const earR = earL.clone();
-    earR.position.x = 0.19;
-    head.add(earR);
-    // 口鼻
-    const muzzle = part(0.16, 0.10, 0.06, BLACK);
-    muzzle.position.set(0, 0.12, -0.21);
-    head.add(muzzle);
-
-    // 手臂：pivot 在肩，网格向下偏移半个臂长
-    this.arms = [];
-    for (const s of [-1, 1]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(s * 0.40, 0.62, 0);
-      body.add(pivot);
-      const upper = part(0.17, 0.62, 0.17, BLACK);
-      upper.position.y = -0.31;
-      pivot.add(upper);
-      this.arms.push(pivot);
+  _buildViewArm() {
+    // MC 的第一人称手臂：从屏幕右下角伸出，略微内旋
+    const pivot = new THREE.Group();
+    pivot.position.set(FP_POS[0], FP_POS[1], FP_POS[2]);
+    pivot.rotation.set(FP_ROT[0], FP_ROT[1], FP_ROT[2]);
+    pivot.scale.setScalar(FP_SCALE);
+    this.viewArms.add(pivot);
+    this.fpPivot = pivot;
+    for (const layer of ["base", "over"]) {
+      const m = new THREE.Mesh(partGeometry("armR", layer), layer === "base" ? this.materials.base : this.materials.over);
+      m.position.y = -4 * PX;
+      pivot.add(m);
     }
-
-    // 腿：pivot 在髋
-    this.legs = [];
-    for (const s of [-1, 1]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(s * 0.16, 0.02, 0);
-      body.add(pivot);
-      const leg = part(0.19, 0.72, 0.19, BLACK);
-      leg.position.y = -0.36;
-      pivot.add(leg);
-      this.legs.push(pivot);
-    }
-
-    // 灵翼：巨大（翼展 WING_SPAN = 5.8 格）、像素贴图、接入选择性泛光。
-    // 几何、贴图与扇动曲线都在 wings.js，量化常量集中在那里。
-    this.wingRig = createWings();
-    this.wingRig.setVisible(false);
-    body.add(this.wingRig.group);
+    // 第一人称手持物：手掌前方
+    this.fpHand = new THREE.Group();
+    this.fpHand.position.set(0, -10 * PX, -1.5 * PX);
+    pivot.add(this.fpHand);
+    // 视模型不投影（否则相机附近会出现一块奇怪的阴影）
+    this.viewArms.traverse((o) => { o.castShadow = false; o.receiveShadow = false; });
   }
 
-  /* ---------------- 第一人称手部 ---------------- */
-
-  _buildArms() {
-    this.fpArms = [];
-    for (const s of [-1, 1]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(s * 0.34, -0.30, -0.55);
-      this.viewArms.add(pivot);
-      const arm = part(0.15, 0.15, 0.56, BLACK);
-      arm.position.z = -0.28;
-      pivot.add(arm);
-      // 手掌：白色，让划水动作看得清
-      const paw = part(0.17, 0.17, 0.16, WHITE);
-      paw.position.z = -0.62;
-      pivot.add(paw);
-      this.fpArms.push(pivot);
+  /** 切换手持物：第三人称手里 + 第一人称手里各一份模型。 */
+  setHeldItem(def) {
+    if (def === this.heldDef || (def && this.heldDef && def.id === this.heldDef.id)) return;
+    this.heldDef = def;
+    for (const hand of [this.handR, this.fpHand]) {
+      while (hand.children.length) hand.remove(hand.children[0]);
     }
+    if (!def) return;
+    const place = (hand, fp) => {
+      const m = createItemModel(def, this.atlas);
+      if (def.kind === "block") {
+        m.scale.setScalar(fp ? 0.32 : 0.26);
+        m.position.set(0, fp ? -0.02 : -0.04, fp ? -0.06 : -0.04);
+        m.rotation.set(0.2, 0.75, 0);
+      } else if (def.kind === "weapon") {
+        // MC 持剑：像素图平面竖在手臂的 YZ 平面里，剑柄在拳心，刃朝前、略上扬。
+        // 像素图对角线 (1,1) 经 Ry(90°) → (0,1,-1)，再 Rx(-30°) → 前方偏上约 15°；
+        // 剑柄像素 (-0.44,-0.38) 经同一旋转落在 (0,-0.109,0.571)，平移回原点。
+        const s = fp ? 0.6 : 0.72;
+        m.scale.setScalar(s);
+        if (fp) {
+          // 第一人称：MC 的斜握 —— 剑面朝向镜头、刃从右下斜向左上（指向准星）。
+          // 手部坐标系里 -Z 是屏幕上方、-Y 是前方：Ry(180°) 镜像对角线，Rx(-90°) 把像素图竖起来；
+          // 剑柄像素经同一旋转落在 (0.44, 0, 0.38)，平移回拳心。
+          m.rotation.set(-Math.PI / 2, Math.PI, 0);
+          m.position.set(-0.44 * s, 0, -0.38 * s);
+        } else {
+          m.rotation.set(-0.52, Math.PI / 2, 0);
+          m.position.set(0, 0.109 * s, -0.571 * s);
+        }
+      } else {
+        // 火把：竖握，木柄底端在拳心
+        const s = fp ? 0.62 : 0.56;
+        m.scale.setScalar(s);
+        m.rotation.set(-0.25, Math.PI / 2, 0);
+        m.position.set(0, 0.42 * s, -0.08 * s);
+      }
+      if (fp) m.traverse((o) => { o.castShadow = false; });
+      hand.add(m);
+    };
+    place(this.handR, false);
+    place(this.fpHand, true);
+  }
+
+  /** 触发一次挥击（攻击 / 挖掘 / 放置）。 */
+  swing() {
+    this._swingT = 0;
+  }
+
+  get swinging() {
+    return this._swingT < 1;
   }
 
   /* ---------------- 姿势 ---------------- */
 
   /**
    * @param {number} dt
-   * @param {object} s 状态 { swimming, submersion, onGround, speed, sprinting, flying, sinking, yaw, pitch }
+   * @param {object} s 状态 { swimming, submersion, onGround, speed, sprinting, riding, rideBank, yaw, pitch }
    */
   update(dt, s) {
     this.time += dt;
     const t = this.time;
 
-    // 平滑状态量，避免姿势突变
     this._swim = damp(this._swim, s.swimming ? 1 : 0, 8, dt);
-    this._fly = damp(this._fly, s.flying ? 1 : 0, 7, dt);
+    this._ride = damp(this._ride, s.riding ? 1 : 0, 10, dt);
+    this._swingT = Math.min(1, this._swingT + dt / SWING_TIME);
     const swim = this._swim;
+    const ride = this._ride;
 
-    const moving = s.speed > 0.6;
+    const moving = s.speed > 0.6 && !s.riding;
     const stride = s.sprinting ? 11.5 : 8.0;
     if (moving && s.onGround) this._pose += dt * stride * Math.min(1, s.speed / 5);
     else this._pose = damp(this._pose, 0, 5, dt);
-
     const gait = Math.sin(this._pose);
     const gait2 = Math.sin(this._pose * 2);
 
+    // 挥击曲线：快出慢收（MC 的挥臂节奏）
+    const sw = this._swingT < 1 ? Math.sin(Math.sqrt(this._swingT) * Math.PI) : 0;
+
     // ---------- 整体朝向 ----------
     this.group.rotation.y = s.yaw;
+    // 骑乘时整体随龙的滚转倾斜
+    this.group.rotation.z = damp(this.group.rotation.z, ride * (s.rideBank || 0), 8, dt);
 
-    // 游泳时身体放平；飞行时前倾并随俯仰/速度起伏
-    const flyPitch = s.pitch ? s.pitch * 0.5 : 0;
-    const targetPitch = swim * -1.30 + this._fly * (-0.22 + flyPitch);
+    const targetPitch = swim * -1.30 + ride * -0.12;
     this.body.rotation.x = damp(this.body.rotation.x, targetPitch, 7, dt);
 
     // ---------- 手臂 ----------
     const [armL, armR] = this.arms;
-    // 自由泳：双臂绕肩交替划水；游泳时手臂沿体侧向前伸展
     const crawl = Math.sin(t * 3.6);
     const swimArmX = -1.55 + crawl * 1.35;
     const swimArmX2 = -1.55 - crawl * 1.35;
-
     const walkArm = gait * 0.72;
-    const flyArm = -0.45;
+    // 骑乘：双手前伸握住龙颈
+    const rideArm = 0.85;
+    // 手持武器时右臂略前抬（MC 持剑姿态）
+    const holdR = this.heldDef ? 0.18 : 0;
 
-    armL.rotation.x = damp(armL.rotation.x, lerp(walkArm, swimArmX, swim) + this._fly * flyArm, 9, dt);
-    armR.rotation.x = damp(armR.rotation.x, lerp(-walkArm, swimArmX2, swim) + this._fly * flyArm, 9, dt);
-    // 游泳时手臂稍微外张，避免穿过躯干
-    const spread = lerp(0.06, 0.30, swim);
+    const armLx = lerp(lerp(walkArm, swimArmX, swim), rideArm, ride);
+    // 旋转约定：手臂沿 -Y 下垂、模型面朝 -Z，绕 X 正转 = 向前抬；挥击 = 向前上方抡起
+    const armRx = lerp(lerp(-walkArm + holdR, swimArmX2, swim), rideArm, ride) + sw * 1.7;
+    armL.rotation.x = damp(armL.rotation.x, armLx, 9, dt);
+    armR.rotation.x = this._swingT < 1 ? armRx : damp(armR.rotation.x, armRx, 9, dt);
+    const spread = lerp(lerp(0.06, 0.30, swim), 0.18, ride);
     armL.rotation.z = damp(armL.rotation.z, spread, 8, dt);
-    armR.rotation.z = damp(armR.rotation.z, -spread, 8, dt);
+    armR.rotation.z = damp(armR.rotation.z, -spread + sw * 0.35, 12, dt);
 
     // ---------- 腿 ----------
     const [legL, legR] = this.legs;
-    // 打腿：比划水更快、幅度更小
     const kick = Math.sin(t * 4.6);
-    legL.rotation.x = damp(legL.rotation.x, lerp(gait * 0.78, kick * 0.42, swim), 9, dt);
-    legR.rotation.x = damp(legR.rotation.x, lerp(-gait * 0.78, -kick * 0.42, swim), 9, dt);
+    // 跨坐：大腿前抬 + 外张
+    const rideLeg = 1.25;
+    legL.rotation.x = damp(legL.rotation.x, lerp(lerp(gait * 0.78, kick * 0.42, swim), rideLeg, ride), 9, dt);
+    legR.rotation.x = damp(legR.rotation.x, lerp(lerp(-gait * 0.78, -kick * 0.42, swim), rideLeg, ride), 9, dt);
+    legL.rotation.z = damp(legL.rotation.z, ride * -0.38, 9, dt);
+    legR.rotation.z = damp(legR.rotation.z, ride * 0.38, 9, dt);
 
-    // ---------- 灵翼 ----------
-    // 1.25 Hz、±0.72 rad 的大幅扇动。
-    // （旧版是 sin(t * 30) ≈ 4.8 Hz 的高频抖动，且用绕 X 旋转驱动沿 X 伸出的
-    //   翅膀 —— 绕 X 转只会让羽面自转，翼尖几乎不动，所以「看着不扇」。）
-    const flying = this._fly > 0.02;
-    this.wingRig.setVisible(flying);
-    if (flying) this.wingRig.update(t);
-
-    // ---------- 头部与躯干 ----------
-    // 抬头换气：游泳时头略抬，避免整张脸埋进水里
-    this.head.rotation.x = damp(this.head.rotation.x, swim * 0.55, 7, dt);
-    // 呼吸起伏 + 飞行微浮
+    // ---------- 头 ----------
+    // 头部跟随视线俯仰（MC 的头会看向准星方向）；游泳时抬头换气
+    const look = s.pitch ? Math.max(-0.9, Math.min(0.9, s.pitch)) : 0;
+    this.head.rotation.x = damp(this.head.rotation.x, swim * 0.55 + (1 - swim) * look, 10, dt);
     const breathe = gait2 * (moving && s.onGround ? 0.02 : 0.012);
-    const flyBob = this._fly * Math.sin(t * 12) * 0.03;
-    this.body.position.y = 0.72 + breathe + swim * 0.06 + flyBob;
+    this.body.position.y = 12 * PX + breathe + swim * 0.06;
 
-    // ---------- 第一人称手部 ----------
-    // 只在「第一人称 + 水中」出现：平时不挡视线，第三人称/观察模式一律隐藏。
-    // （否则 V 切换到全身视角时，这双手还会悬在屏幕上。）
-    const showArms = this._fp && swim > 0.02;
-    this.viewArms.visible = showArms;
-    if (showArms) {
-      for (let i = 0; i < 2; i++) {
-        const a = this.fpArms[i];
-        const phase = i === 0 ? crawl : -crawl;
-        // 前后推水 + 上下起伏
-        a.position.z = -0.55 - phase * 0.30 + swim * 0.10;
-        a.position.y = -0.30 + Math.max(0, phase) * 0.10 - swim * 0.10;
-        a.rotation.x = 0.30 + phase * 0.55;
-        a.rotation.y = phase * 0.22;
-      }
+    // ---------- 第一人称视模型 ----------
+    // 只在第一人称显示；游泳时随划水前后推，挥击时整臂下劈
+    this.viewArms.visible = this._fp && !s.riding;
+    if (this.viewArms.visible) {
+      const p = this.fpPivot;
+      const bobX = moving && s.onGround ? Math.sin(this._pose) * 0.018 : 0;
+      const bobY = moving && s.onGround ? Math.abs(Math.cos(this._pose)) * 0.022 : 0;
+      const stroke = swim > 0.02 ? crawl * 0.12 * swim : 0;
+      p.position.set(FP_POS[0] + bobX - sw * 0.16, FP_POS[1] - bobY + sw * 0.06, FP_POS[2] - stroke - sw * 0.10);
+      p.rotation.set(FP_ROT[0] - sw * 0.9, FP_ROT[1] + sw * 0.6, FP_ROT[2] + sw * 0.3);
     }
   }
 
@@ -237,7 +221,6 @@ export class Avatar {
   setMode(mode) {
     this._fp = mode === "first";
     this.group.visible = !this._fp;
-    // viewArms 的可见性由 update() 每帧按「第一人称 + 入水」决定
   }
 
   /** 把全身模型放到玩家位置（脚底对齐）。 */

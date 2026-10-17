@@ -16,6 +16,10 @@ export const QUALITY_TEST_SOURCE = `
   const WATER_ID = BLOCKS.findIndex((b) => b && b.name === "water");
   const GRASS_ID = BLOCKS.findIndex((b) => b && b.name === "grass");
   const results = [];
+  // 放置测试走创造模式（不依赖背包里正好有草方块）；清理现场必须走 edits，否则会被记进存档差量
+  const prevCreative = interaction.creative;
+  interaction.creative = true;
+  const setBlock = (x, y, z, id) => (P.edits ? P.edits.set(x, y, z, id) : world.set(x, y, z, id));
 
   function place(x, y, z) {
     player.position.set(x, y, z);
@@ -133,7 +137,7 @@ export const QUALITY_TEST_SOURCE = `
       });
 
       // 清理：恢复原地形
-      world.set(g.x, g.y + 1, g.z, AIR);
+      setBlock(g.x, g.y + 1, g.z, AIR);
       interaction.hit = null;
     }
     results.push({
@@ -171,6 +175,7 @@ export const QUALITY_TEST_SOURCE = `
   }
 
   // 还原
+  interaction.creative = prevCreative;
   interaction.hit = null;
   avatar.setMode("first");
 

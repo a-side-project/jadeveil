@@ -1,10 +1,9 @@
 /**
  * HUD —— 全英文界面，文字一律由位图像素字体绘制。
  */
-import { HOTBAR, BLOCKS, ID, blockDef } from "../world/blocks.js";
 import { CAMERA_LABELS } from "../player/controller.js";
 import { Minimap } from "./minimap.js";
-import { setPixelText, attachPixelText, renderText } from "./pixelfont.js";
+import { setPixelText, attachPixelText } from "./pixelfont.js";
 
 export const BRAND = "JADEVEIL";
 export const TAGLINE = "A VOXEL REALM OF MIST AND JADE";
@@ -43,19 +42,19 @@ export class HUD {
       slider: document.getElementById("timeslider"),
     };
 
-    this.slotIndex = 0;
     this.hidden = false;
     this._nameTimer = 0;
     this.audio = null; // 由 main.js 注入，用于 UI 音效
     this.speeds = [1, 4, 12, 40];
     this.speedIndex = 0;
 
+    this.inventory = null; // 由 main.js 注入：数字键 / 滚轮切换快捷栏
+    this.mount = null; // 骑乘时数字键归技能栏，滚轮不切换物品
+
     this._buildStaticLabels();
-    this._buildHotbar();
     this._bindTime();
     this._bindKeys();
     this._bindSettings();
-    this.selectSlot(0, true);
 
     const mmCanvas = document.getElementById("minimap-canvas");
     this.minimap = world ? new Minimap(world, player, mmCanvas) : null;
@@ -153,42 +152,6 @@ export class HUD {
     setPixelText(this.btnCycle, playing ? "CYCLE ON" : "CYCLE OFF", { color: playing ? C.gold : C.dim, scale: 1 });
     this.btnCycle.classList.toggle("on", playing);
     setPixelText(this.btnSpeed, `SPEED x${this.speeds[this.speedIndex]}`, { color: C.bone, scale: 1 });
-  }
-
-  /* ---------------- 快捷栏 ---------------- */
-  _buildHotbar() {
-    const bar = this.el.hotbar;
-    bar.innerHTML = "";
-    this.slots = [];
-    HOTBAR.forEach((name, i) => {
-      const id = ID[name];
-      const slot = document.createElement("div");
-      slot.className = "slot";
-
-      const canvas = this.atlas.tileCanvas(BLOCKS[id].faces[2], 64);
-      canvas.className = "icon";
-      slot.appendChild(canvas);
-
-      const num = document.createElement("span");
-      num.className = "num";
-      setPixelText(num, String(i + 1), { color: C.gold, scale: 1 });
-      slot.appendChild(num);
-
-      slot.addEventListener("click", () => this.selectSlot(i));
-      bar.appendChild(slot);
-      this.slots.push(slot);
-    });
-  }
-
-  selectSlot(i, silent = false) {
-    this.slotIndex = ((i % HOTBAR.length) + HOTBAR.length) % HOTBAR.length;
-    this.slots.forEach((s, k) => s.classList.toggle("active", k === this.slotIndex));
-    const id = ID[HOTBAR[this.slotIndex]];
-    this.interaction.selected = id;
-    if (!silent) {
-      this.showItemName(blockDef(id).label);
-      this.audio?.uiSelect();
-    }
   }
 
   showItemName(text) {
@@ -302,21 +265,27 @@ export class HUD {
     this.el.settings.classList.toggle("open");
   }
 
-  setPaused(paused) {
-    this.el.pause.classList.toggle("open", paused);
-    if (paused) this.el.overlay.classList.add("hidden");
-  }
-
   /* ---------------- 键盘 ---------------- */
   _bindKeys() {
     window.addEventListener("keydown", (e) => {
-      if (e.code.startsWith("Digit")) {
+      if (!this.player.locked) return;
+      const riding = this.mount && this.mount.active;
+      if (e.code.startsWith("Digit") && !riding) {
         const n = Number(e.code.slice(5));
-        if (n >= 1 && n <= HOTBAR.length) this.selectSlot(n - 1);
+        if (n >= 1 && n <= 9) {
+          this.inventory?.select(n - 1);
+          const def = this.inventory?.selectedItem;
+          if (def) this.showItemName(def.label);
+          this.audio?.uiSelect();
+        }
       }
       if (e.code === "KeyH") {
         this.hidden = !this.hidden;
         this.el.hud.style.display = this.hidden ? "none" : "";
+      }
+      if (e.code === "F3") {
+        e.preventDefault();
+        document.body.classList.toggle("debug");
       }
       if (e.code === "KeyO") this.toggleSettings();
       if (e.code === "KeyM" && this.minimap) {
@@ -326,8 +295,10 @@ export class HUD {
       }
     });
     window.addEventListener("wheel", (e) => {
-      if (!this.player.locked) return;
-      this.selectSlot(this.slotIndex + (e.deltaY > 0 ? 1 : -1));
+      if (!this.player.locked || !this.inventory || (this.mount && this.mount.active)) return;
+      this.inventory.select(this.inventory.selected + (e.deltaY > 0 ? 1 : -1));
+      const def = this.inventory.selectedItem;
+      if (def) this.showItemName(def.label);
     }, { passive: true });
   }
 
@@ -341,7 +312,7 @@ export class HUD {
     const p = this.player.position;
     this.dyn.pos.set(`${Math.round(p.x)} ${Math.round(p.y)} ${Math.round(p.z)}`);
     this.dyn.mode.set(
-      CAMERA_LABELS[this.player.mode].toUpperCase() + (this.player.flying ? " / FLY" : ""),
+      (CAMERA_LABELS[this.player.mode] || this.player.mode).toUpperCase() + (this.player.flying ? " / FLY" : ""),
     );
     this.dyn.chunk.set(`${stats.chunks} / ${Math.round(stats.tris / 1000)}K`);
     this.dyn.clock.set(this.daynight.clockText);
@@ -360,7 +331,6 @@ export class HUD {
   }
 
   setLocked(locked) {
-    this.el.overlay.classList.toggle("hidden", locked);
     this.el.crosshair.classList.toggle("hidden", !locked || this.player.mode === "orbit");
   }
 

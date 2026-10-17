@@ -49,18 +49,21 @@
       }
 
       /* ---------- Stats ---------- */
-      #stats { left: 14px; top: 14px; min-width: 176px; }
+      /* 调试信息（F3）：统计与时间面板默认隐藏 */
+      #stats { left: 14px; top: 14px; min-width: 176px; display: none; }
+      body.debug #stats { display: block; }
       #stats .row { display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-top: 5px; }
 
       /* ---------- Time panel ---------- */
-      #timepanel { right: 14px; top: 14px; min-width: 216px; pointer-events: auto; }
+      #timepanel { left: 14px; top: 150px; min-width: 216px; pointer-events: auto; display: none; }
+      body.debug #timepanel { display: block; }
       #timepanel .clock { margin: 6px 0 8px; display: flex; justify-content: flex-end; }
       #timeslider { width: 100%; margin-top: 4px; }
       .btnrow { display: flex; gap: 4px; margin-top: 7px; }
       .btnrow button { flex: 1; cursor: pointer; }
 
       /* ---------- Settings ---------- */
-      #settings { right: 14px; top: 224px; width: 224px; pointer-events: auto; display: none; }
+      #settings { right: 14px; top: 214px; width: 224px; pointer-events: auto; display: none; z-index: 30; }
       #settings.open { display: block; }
       #settings .field { margin-bottom: 11px; }
       #settings .field > .lbl { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
@@ -79,14 +82,15 @@
       .slot { position: relative; width: 48px; height: 48px; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; transition: none; }
       .slot canvas.icon { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
       .slot .num { position: absolute; right: 3px; top: 2px; }
-      #itemname { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); opacity: 0; transition: none; }
+      #itemname { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); opacity: 0; transition: opacity 0.15s; }
+      #itemname.show { opacity: 1; }
 
       /* ---------- Help ---------- */
-      #help { left: 14px; bottom: 16px; max-width: 300px; }
+      #help { display: none; }
       #help .k { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 
       /* ---------- Minimap ---------- */
-      #minimap { right: 14px; bottom: 16px; width: 176px; height: 176px; }
+      #minimap { right: 14px; top: 14px; width: 176px; height: 176px; }
       #minimap canvas#minimap-canvas { width: 100%; height: 100%; image-rendering: pixelated; }
       #minimap .cap { position: absolute; left: 12px; top: 10px; }
 
@@ -95,13 +99,15 @@
         position: absolute; left: 50%; top: 62%; transform: translateX(-50%);
         opacity: 0; transition: opacity 0.4s;
       }
-      #chunkprog.show { opacity: 1; }
+      /* 区块构建进度属于调试信息：只在 F3 调试视图里显示 */
+      body.debug #chunkprog.show { opacity: 1; }
 
       /* ---------- Overlay / Pause ---------- */
       #overlay {
         position: fixed; inset: 0; z-index: 30; display: flex;
         align-items: center; justify-content: center; cursor: pointer;
-        background: #05070a;
+        /* 标题页背后是实时渲染的主城（环绕镜头），只压一层暗角 */
+        background: radial-gradient(ellipse at center, rgba(5,7,10,0.25) 30%, rgba(5,7,10,0.85) 100%);
       }
       #overlay.hidden { display: none; }
       #overlay .card { text-align: center; max-width: 860px; }

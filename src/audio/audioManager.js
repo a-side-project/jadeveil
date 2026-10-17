@@ -200,4 +200,20 @@ export class AudioManager {
   uiHover() { this.play("ui_hover", { volume: 0.35, rate: 1 }); }
   uiSelect() { this.play("ui_select", { volume: 0.6, rate: 1 }); }
   blocked() { this.play("ui_error", { volume: 0.6, rate: 1 }); }
+
+  /* ---------------- 战斗 / 坐骑 / RPG ----------------
+   * 仍是现有的真实录音素材（Kenney CC0），用变速变调区分用途，不引入合成音色。 */
+  swordSwing() { this.play("ui_hover", { volume: 0.55, rate: 0.55 + Math.random() * 0.1 }); }
+  hitEntity(heavy) { this.play("break_wood", { volume: heavy ? 1 : 0.8, rate: heavy ? 0.7 : 0.9 + Math.random() * 0.1 }); }
+  hurt() { this.play("land_heavy", { volume: 0.85, rate: 1.35 }); }
+  death() { this.play("land_heavy", { volume: 1, rate: 0.6 }); }
+  pickup() { this.play("ui_select", { volume: 0.45, rate: 1.5 + Math.random() * 0.2 }); }
+  summon() { this.play("ui_select", { volume: 0.9, rate: 0.45 }); this.play("land_heavy", { volume: 0.7, rate: 0.5 }); }
+  dismiss() { this.play("ui_select", { volume: 0.7, rate: 0.6 }); }
+  breathPuff() { this.play("splash", { volume: 0.22, rate: 0.42 + Math.random() * 0.08 }); }
+  fireball() { this.play("land", { volume: 0.7, rate: 0.55 }); }
+  explosion() { this.play("land_heavy", { volume: 1, rate: 0.45 }); this.play("break_stone", { volume: 0.8, rate: 0.6 }); }
+  roar() { this.play("land_heavy", { volume: 1, rate: 0.32 }); this.play("land_heavy", { volume: 0.7, rate: 0.4 }); }
+  dash() { this.play("splash", { volume: 0.5, rate: 0.6 }); }
+  wingFlap() { this.play("step_grass", { volume: 0.35, rate: 0.35 }); }
 }

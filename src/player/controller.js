@@ -64,6 +64,20 @@ export class Player {
     this.flying = false;
     this.sprinting = false;
 
+    // 碰撞体尺寸（半宽 / 高）。骑乘末影龙时由坐骑换成龙的碰撞体。
+    this.hw = PLAYER_W;
+    this.bh = PLAYER_H;
+    this.eyeH = EYE_H;
+    // 飞行手感参数；坐骑可整体替换（龙更快、更有惯性）
+    this.flyTuning = { accel: FLY_ACCEL, max: FLY_MAX, maxFast: FLY_MAX_FAST };
+    // 当前坐骑（null = 步行）。坐骑负责位置之外的一切：模型、技能、相机距离。
+    this.mount = null;
+    // 第三人称相机距离（骑乘时拉远）
+    this.thirdDist = 5.2;
+    this.shake = 0;
+    // 下一次落地免摔落伤害（从龙背上下来时由坐骑置位）
+    this.safeFall = false;
+
     // 水体状态
     this.inWater = false; // 脚部在水里（涉水）
     this.swimming = false; // 躯干在水里（真正的游泳）
@@ -119,7 +133,10 @@ export class Player {
     const dom = this.dom;
 
     dom.addEventListener("click", () => {
-      if (!this.locked) dom.requestPointerLock();
+      if (this.locked) return;
+      // 没有有效手势时浏览器会拒绝锁定（返回被拒的 Promise），吞掉即可
+      const r = dom.requestPointerLock();
+      if (r && r.catch) r.catch(() => {});
     });
 
     document.addEventListener("pointerlockchange", () => {
@@ -146,7 +163,7 @@ export class Player {
   get eyePosition() {
     return this._tmp.set(
       this.position.x,
-      this.position.y + EYE_H + this.bobAmount,
+      this.position.y + this.eyeH + this.bobAmount,
       this.position.z,
     );
   }
@@ -199,8 +216,8 @@ export class Player {
    * 但落地判定需要额外检查「脚下是否有支撑」，见 hasSupportBelow()。
    */
   collides(px, py, pz) {
-    const w = PLAYER_W;
-    const h = PLAYER_H;
+    const w = this.hw;
+    const h = this.bh;
     const x0 = Math.floor(px - w + EPS);
     const x1 = Math.floor(px + w - EPS);
     const y0 = Math.floor(py + EPS);
@@ -223,7 +240,7 @@ export class Player {
    * 但此时应该算落地。
    */
   hasSupportBelow(px, py, pz) {
-    const w = PLAYER_W;
+    const w = this.hw;
     const x0 = Math.floor(px - w + EPS);
     const x1 = Math.floor(px + w - EPS);
     const z0 = Math.floor(pz - w + EPS);
@@ -267,8 +284,8 @@ export class Player {
     if (!this.collides(p.x, p.y, p.z)) return false;
 
     const sign = Math.sign(amount);
-    const w = PLAYER_W;
-    const h = PLAYER_H;
+    const w = this.hw;
+    const h = this.bh;
 
     // 二分逼近：找到最远的合法位置
     p[axis] = before;
@@ -346,7 +363,7 @@ export class Player {
   /** 玩家 AABB 覆盖的范围内，指定 y 层是否有实心方块。 */
   _anySolidAtY(y) {
     const p = this.position;
-    const w = PLAYER_W;
+    const w = this.hw;
     const x0 = Math.floor(p.x - w + EPS);
     const x1 = Math.floor(p.x + w - EPS);
     const z0 = Math.floor(p.z - w + EPS);
@@ -362,8 +379,8 @@ export class Player {
   /** 玩家 AABB 覆盖的范围内，指定 x 或 z 层是否有实心方块。 */
   _anySolidAtXZ(axis, value) {
     const p = this.position;
-    const w = PLAYER_W;
-    const h = PLAYER_H;
+    const w = this.hw;
+    const h = this.bh;
     const y0 = Math.floor(p.y + EPS);
     const y1 = Math.floor(p.y + h - EPS);
     const a0 = Math.floor(p[axis === "x" ? "z" : "x"] - w + EPS);
@@ -461,6 +478,8 @@ export class Player {
     );
 
     // 落地/滞空峰值追踪：用于落地音效强度
+    // 飞行 / 游泳不累计下落高度：从飞行中落地、落进水里都不算摔
+    if (this.flying || this.swimming || this.inWater) this._peakY = this.position.y;
     if (this.onGround) {
       if (!wasGrounded) this.onLand?.(Math.max(0, this._peakY - this.position.y));
       this._peakY = this.position.y;
@@ -474,7 +493,7 @@ export class Player {
     // 现在改为重生到校验过的安全点。
     if (this.position.y < VOID_Y) this.respawn();
     // 世界顶部硬限位：绝不允许飞出体素体积（否则上方无碰撞体可挡）
-    const CEIL = CH - PLAYER_H - 0.05;
+    const CEIL = CH - this.bh - 0.05;
     if (this.position.y > CEIL) {
       this.position.y = CEIL;
       if (this.velocity.y > 0) this.velocity.y = 0;
@@ -518,6 +537,7 @@ export class Player {
     }
 
     this.updateCamera(dt);
+    this._applyShake(dt);
   }
 
   /**
@@ -532,7 +552,8 @@ export class Player {
    */
   _updateFlight(dt, fwd, side, sinY, cosY, keys) {
     const v = this.velocity;
-    const maxSpeed = this.sprinting ? FLY_MAX_FAST : FLY_MAX;
+    const tune = this.flyTuning;
+    const maxSpeed = this.sprinting ? tune.maxFast : tune.max;
 
     // 视线方向（含俯仰）
     const cp = Math.cos(this.pitch);
@@ -549,17 +570,17 @@ export class Player {
     let ay = 0;
     let az = 0;
     if (fwd !== 0) {
-      ax += fwdX * fwd * FLY_ACCEL;
-      ay += fwdY * fwd * FLY_ACCEL;
-      az += fwdZ * fwd * FLY_ACCEL;
+      ax += fwdX * fwd * tune.accel;
+      ay += fwdY * fwd * tune.accel;
+      az += fwdZ * fwd * tune.accel;
     }
     if (side !== 0) {
-      ax += rightX * side * FLY_ACCEL;
-      az += rightZ * side * FLY_ACCEL;
+      ax += rightX * side * tune.accel;
+      az += rightZ * side * tune.accel;
     }
     // 垂直推进
-    if (keys.has("Space")) ay += FLY_ACCEL * 0.85;
-    if (keys.has("ControlLeft") || keys.has("KeyC")) ay -= FLY_ACCEL * 0.85;
+    if (keys.has("Space")) ay += tune.accel * 0.85;
+    if (keys.has("ControlLeft") || keys.has("KeyC")) ay -= tune.accel * 0.85;
 
     // 俯冲：朝下飞时额外加速（重力感）
     if (fwdY < -0.15 && fwd > 0) {
@@ -674,6 +695,8 @@ export class Player {
   }
 
   updateCamera(dt) {
+    // 调试/截图机位：相机由外部摆放，控制器不接管
+    if (this.mode === "debug") return;
     const cam = this.camera;
     const eye = this.eyePosition.clone();
     const horizSpeed = Math.hypot(this.velocity.x, this.velocity.z);
@@ -692,7 +715,7 @@ export class Player {
         -Math.sin(this.pitch),
         Math.cos(this.yaw) * Math.cos(this.pitch),
       ).normalize();
-      let dist = 5.2;
+      let dist = this.thirdDist;
       const step = 0.22;
       const probe = this._probe;
       for (let d = 0.4; d <= dist; d += step) {
@@ -718,6 +741,16 @@ export class Player {
       cam.fov = 62;
       cam.updateProjectionMatrix();
     }
+  }
+
+  /** 镜头震动（爆炸 / 龙吼 / 重摔）：随机偏移按指数衰减。 */
+  _applyShake(dt) {
+    if (!(this.shake > 0.001)) return;
+    const a = this.shake * 0.35;
+    this.camera.position.x += (Math.random() - 0.5) * a;
+    this.camera.position.y += (Math.random() - 0.5) * a;
+    this.camera.position.z += (Math.random() - 0.5) * a;
+    this.shake *= Math.exp(-6 * dt);
   }
 
   cycleMode() {
