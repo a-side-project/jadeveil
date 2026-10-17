@@ -7,9 +7,8 @@ music is loaded or played. See `src/audio/audioManager.js` `_setupMusic()` (it i
 intentionally a no-op). The music on/off and volume settings remain in the UI,
 labelled "MUSIC (REMOVED)", so the toggle survives for a future re-enable.
 
-(Previously used tracks — PeriTune "Wuxia" series, CC BY 4.0, and earlier
-(historical third-party music note removed)
-history only.)
+Earlier background-music experiments have been removed from both the working tree and the
+repository history; no music files are distributed with this project.
 
 ## Sound effects
 - `sfx/break_*`, `sfx/place_*`, `sfx/step_*`, `sfx/jump_*`, `sfx/land_*` —

@@ -85,6 +85,9 @@ for (const entry of ADDON_ENTRIES) {
 console.log(`addons: ${copied.size} 个文件`);
 console.log([...copied].sort().map((f) => "  " + f).join("\n"));
 
+// MIT 要求再分发时附带许可证全文
+await copy(join(THREE, "LICENSE"), join(OUT, "LICENSE"));
+
 const version = JSON.parse(await readFile(join(THREE, "package.json"), "utf8")).version;
 await writeFile(
   join(OUT, "VERSION.txt"),
