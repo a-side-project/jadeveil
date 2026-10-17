@@ -210,3 +210,24 @@ curl: (35) LibreSSL ... sslv3 alert handshake failure
   授权始终由用户本人在浏览器里完成。凭据只落在 `~/.cf/config.toml`，不进仓库、不进报告。
 - **零信任登录**：`<team>.cloudflareaccess.com` 的登录页支持 `OIDC SSO` 与邮箱验证码两种；
   Lark SSO 会话还在时会一键入，否则需要本人完成登录/验证码。
+
+---
+
+## 公开版：Vercel（jadeveil.xiaoa.name）
+
+| 项 | 值 |
+| --- | --- |
+| 地址 | https://jadeveil.xiaoa.name（公开，无需登录） |
+| Vercel 项目 | `jadeveil`（团队 Archer's projects），本地 `.vercel/` 已关联（不入库） |
+| 部署方式 | 静态站点：`vercel.json` 声明无安装、无构建，`outputDirectory: "."` |
+| 上传范围 | `.vercelignore`（与 Cloudflare 的 `.assetsignore` 对齐：排除 docs/、scripts/、*.md 等） |
+| DNS | DNSPod：`jadeveil` CNAME → Vercel 分配的 `*.vercel-dns-017.com`（与 lucha 同款） |
+| 证书 | Vercel 自动签发 |
+| 响应头 | `sw.js` 不缓存；manifest 正确 Content-Type；HSTS / nosniff / Referrer-Policy（与 lucha 一致） |
+
+```bash
+vercel deploy --prod --yes      # 发布到 jadeveil.xiaoa.name
+curl -sI https://jadeveil.xiaoa.name/sw.js | grep -i cache-control   # 应为 no-cache
+```
+
+两条线上同时保留：Cloudflare（团队内部，Zero Trust）与 Vercel（公开）。两边都从同一份 `master` 部署，内容一致；存档按域名各自独立。

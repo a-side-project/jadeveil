@@ -3,17 +3,21 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/hero.jpg" width="1100" alt="黄金时刻的 JADEVEIL 主城：朱红殿宇、琉璃屋顶与漂浮的青玉浮岛，全部在浏览器中实时渲染" />
+  <a href="https://jadeveil.xiaoa.name"><img src="docs/assets/brand/lockup.svg" width="760" alt="JADEVEIL：玉月下的像素楼阁与像素字标" /></a>
 </p>
-
-<h1 align="center">JADEVEIL</h1>
 
 <p align="center">
   一款用 three.js 从零写成的 Minecraft 渲染风格单机 RPG —— 一座雾与玉的中式体素主城，一位穿红色连帽衫的主角，还有一条可以骑乘的末影龙。
 </p>
 
 <p align="center">
-  <a href="#主城"><strong>主城</strong></a>
+  <a href="https://jadeveil.xiaoa.name"><strong>▶ 在浏览器里直接玩</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#游玩与安装"><strong>安装为应用</strong></a>
+</p>
+
+<p align="center">
+  <a href="#主城">主城</a>
   &nbsp;·&nbsp;
   <a href="#玩法系统">玩法系统</a>
   &nbsp;·&nbsp;
@@ -27,11 +31,17 @@
 </p>
 
 <p align="center">
+  <a href="https://jadeveil.xiaoa.name"><img alt="在线版本" src="https://img.shields.io/website?url=https%3A%2F%2Fjadeveil.xiaoa.name&up_message=online&down_message=offline&style=for-the-badge&label=LIVE%20BUILD&labelColor=0b1014&color=e8b44a"></a>
+  <img alt="PWA" src="https://img.shields.io/badge/PWA-INSTALLABLE%20%C2%B7%20OFFLINE-6fc0ae?style=for-the-badge&labelColor=0b1014">
   <img alt="three.js r186" src="https://img.shields.io/badge/THREE.JS-r186-e8b44a?style=for-the-badge&labelColor=0b1014">
   <img alt="零构建" src="https://img.shields.io/badge/BUILD%20STEP-NONE-6fc0ae?style=for-the-badge&labelColor=0b1014">
   <img alt="单机" src="https://img.shields.io/badge/MODE-SINGLE%20PLAYER-c0392b?style=for-the-badge&labelColor=0b1014">
   <img alt="存档" src="https://img.shields.io/badge/SAVES-INDEXEDDB%20%2B%20FILE-9b3fe0?style=for-the-badge&labelColor=0b1014">
   <img alt="测试" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-77%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
+</p>
+
+<p align="center">
+  <a href="https://jadeveil.xiaoa.name"><img src="docs/assets/hero.jpg" width="1100" alt="黄金时刻的 JADEVEIL 主城：朱红殿宇、琉璃屋顶与漂浮的青玉浮岛，全部在浏览器中实时渲染" /></a>
 </p>
 
 ---
@@ -61,6 +71,18 @@ JADEVEIL 借用了 Minecraft 的外观：方块世界、像素贴图和 64 × 64
     <td align="center"><img src="docs/assets/title.jpg" alt="标题页，背景是实时环绕的主城" /><br><sub>标题页：继续游戏、新游戏或读取存档文件</sub></td>
   </tr>
 </table>
+
+## 游玩与安装
+
+打开 **[jadeveil.xiaoa.name](https://jadeveil.xiaoa.name)** 就能直接玩。JADEVEIL 是一款渐进式 Web 应用（PWA），安装一次之后，它会在独立窗口中打开，可以从程序坞或主屏幕启动，离线也能玩。
+
+| 平台 | 安装方式 |
+|---|---|
+| Chrome / Edge（电脑） | 点标题页或暂停菜单里的 **INSTALL APP**，或者点地址栏里的安装图标 |
+| Android（Chrome） | 菜单里的 **INSTALL APP**，或 ⋮ →「安装应用」 |
+| iPhone / iPad（Safari） | 分享 →「添加到主屏幕」（标题页会显示这条提示） |
+
+安装时会预先缓存游戏外壳，各个模块、贴图和音效会在第一次游玩时进入缓存。之后断网也能完整启动。存档保存在浏览器里，每个域名各自独立；如果要在不同设备或域名之间转移进度，用暂停菜单里的 **EXPORT SAVE FILE** 和 **LOAD SAVE FILE**。
 
 ## 亮点
 
@@ -198,7 +220,12 @@ bodyFits(x, z)      = 每个采样点都可走、比 H 低不超过 1 格，
 ## 目录结构
 
 ```text
-index.html                  # 页面骨架、HUD 结构、import map → vendor/three
+index.html                  # 页面骨架、HUD 结构、import map → vendor/three、PWA 与分享卡 meta
+manifest.webmanifest        # PWA 清单（图标、截图、全屏显示）
+sw.js                       # Service Worker：网络优先，离线回退缓存
+favicon.ico · favicon.svg   # 品牌图标，由 scripts/brand.mjs 生成
+icons/ · pwa/               # 应用图标（普通 + 可裁切）与安装面板截图
+og-image.png                # 1200 × 630 分享卡
 serve.mjs                   # 零依赖的本地静态服务器
 src/
 ├── main.js                 # 启动、状态机、系统组装、测试运行器入口
@@ -213,6 +240,7 @@ src/
 tests/                      # 浏览器内测试套件（碰撞、浮岛、世界防护、水体、质量、RPG、居民）
 vendor/three/               # 锁定版本的 three.js r186 核心与用到的 addons
 audio/                      # 音效文件与 CREDITS.md
+scripts/brand.mjs           # 一份 32 × 32 像素 logo → 全部图标、字标与分享卡
 docs/                       # 美术方向、开发日志、部署说明、README 配图
 ```
 
@@ -246,6 +274,10 @@ __pandaria.runQualityTests()             //  3  化身与放置回归
 __pandaria.runRpgTests()                 // 13  生命、背包、掉落、建造、火把、近战、坐骑、存档
 __pandaria.runNpcTests()                 //  4  140 人 × 90 秒：0 穿墙、0 入水、0 离网
 ```
+
+## 部署
+
+正式版是部署在 Vercel 上的静态站点，地址是 **[jadeveil.xiaoa.name](https://jadeveil.xiaoa.name)**。没有安装和构建步骤（`vercel.json` 把两者都声明为空操作）。Service Worker 以 `no-cache` 方式提供，更新能立刻到达玩家；安全响应头与其他 `xiaoa.name` 项目保持一致。品牌资产用 `node scripts/brand.mjs` 重新生成。
 
 ## 工程原则
 
