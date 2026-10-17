@@ -11,19 +11,13 @@ import * as THREE from "three";
 import { AIR, BLOCKS, FACE_LIGHT, isOpaque, isLiquid } from "./blocks.js";
 import { CH, CW } from "./voxelWorld.js";
 import { hash3i } from "../core/noise.js";
+import { TILE_VARIANTS } from "./atlas.js";
 
-/** 有变体的贴图名（与 atlas.js 的 VARIANT_BASE 对应）。 */
-const VARIANT_TILES = new Set([
-  "grass_top", "grass_side", "dirt", "rock", "stone_dark", "moss_stone",
-  "slate", "marble", "sand", "wall_red", "roof_gold", "roof_ink",
-  "bamboo_stalk", "wood_beam", "gold_brick", "jade_block",
-]);
-const VARIANT_COUNT = 4;
-
-/** 根据方块世界坐标选一个稳定的变体名。 */
+/** 根据方块世界坐标选一个稳定的变体名（变体数表来自 atlas.js，两边同源）。 */
 function variantOf(tileName, x, y, z) {
-  if (!VARIANT_TILES.has(tileName)) return tileName;
-  const v = Math.floor(hash3i(x, y, z, 0x5eed) * VARIANT_COUNT) % VARIANT_COUNT;
+  const n = TILE_VARIANTS[tileName];
+  if (!n) return tileName;
+  const v = Math.floor(hash3i(x, y, z, 0x5eed) * n) % n;
   return `${tileName}#${v}`;
 }
 

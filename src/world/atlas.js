@@ -10,12 +10,13 @@ import * as THREE from "three";
 import { Bitmap } from "./pixels.js";
 import { NATURE_TILES } from "./tiles/nature.js";
 import { BUILD_TILES } from "./tiles/build.js";
+import { CRAFT_TILES, CRAFT_TILE_NAMES, CRAFT_VARIANTS } from "./tiles/craft.js";
 
 export const TILE = 64;
 export const PAD = 2;
 export const CELL = TILE + PAD * 2; // 68
 
-const ALL_TILES = { ...NATURE_TILES, ...BUILD_TILES };
+const ALL_TILES = { ...NATURE_TILES, ...BUILD_TILES, ...CRAFT_TILES };
 
 /**
  * 方块变体：同一材质生成多个随机变体，消除大面积重复感。
@@ -28,11 +29,19 @@ const VARIANT_BASE = [
   "bamboo_stalk", "wood_beam", "gold_brick", "jade_block",
 ];
 
+/**
+ * 每种贴图的变体数：老素材 4 张，建造素材 CRAFT_VARIANTS 张。
+ * mesher 按这张表挑变体，两边共用同一个来源，不会对不上。
+ */
+export const TILE_VARIANTS = {};
+for (const base of VARIANT_BASE) TILE_VARIANTS[base] = VARIANT_COUNT;
+for (const base of CRAFT_TILE_NAMES) TILE_VARIANTS[base] = CRAFT_VARIANTS;
+
 // 为每个基础贴图生成 N 个变体，命名为 name#0 .. name#(N-1)
-for (const base of VARIANT_BASE) {
+for (const [base, count] of Object.entries(TILE_VARIANTS)) {
   const fn = ALL_TILES[base];
   if (!fn) continue;
-  for (let v = 0; v < VARIANT_COUNT; v++) {
+  for (let v = 0; v < count; v++) {
     ALL_TILES[`${base}#${v}`] = (b) => {
       // 用变体序号扰动随机种子，得到不同的细节分布
       const origSeed = b.seed.bind(b);
@@ -214,7 +223,11 @@ export class TextureAtlas {
 
     // ---- 粗糙度图：按材质语义 ----
     const roughOf = (name) => {
-      if (/roof_gold|gold_brick|glow|archway_plaque/.test(name)) return 0.20; // 琉璃：光滑
+      if (/roof_gold|roof_blue|roof_green|gold_brick|glow|archway_plaque/.test(name)) return 0.20; // 琉璃：光滑
+      if (/lacquer/.test(name)) return 0.26;                                 // 黑漆：漆面高光
+      if (/copper/.test(name)) return 0.38;                                  // 铜板：金属微亮
+      if (/planks|lattice|thatch|straw|carpet/.test(name)) return 0.7;       // 木板/织物
+      if (/brick|cobble|pebble|carved|plaster|terracotta/.test(name)) return 0.9; // 砖石墙面
       if (/jade/.test(name)) return 0.32;                                    // 玉：半光泽
       if (/marble|railing/.test(name)) return 0.48;                          // 汉白玉：微亮
       if (/water/.test(name)) return 0.06;                                   // 水：镜面

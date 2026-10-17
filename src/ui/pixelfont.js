@@ -109,8 +109,17 @@ export function renderText(text, opts = {}) {
   const canvasH = ch + pad * 2;
 
   const key = `${s}|${scale}|${color}|${outline}|${shadow}|${tracking}`;
-  let cached = cache.get(key);
-  if (cached) return cached.cloneNode(true);
+  // 缓存里放的是「母版」，每次返回一张拷贝：
+  // canvas.cloneNode 不会复制像素（克隆出来是空白的），所以必须 drawImage 复制。
+  const copy = (src) => {
+    const c = document.createElement("canvas");
+    c.width = src.width;
+    c.height = src.height;
+    c.getContext("2d").drawImage(src, 0, 0);
+    return c;
+  };
+  const cached = cache.get(key);
+  if (cached) return copy(cached);
 
   const canvas = document.createElement("canvas");
   canvas.width = canvasW;
@@ -139,7 +148,7 @@ export function renderText(text, opts = {}) {
   put(0, 0, color);
 
   cache.set(key, canvas);
-  return canvas;
+  return copy(canvas);
 }
 
 /**
