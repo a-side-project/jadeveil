@@ -362,9 +362,11 @@ Open `http://127.0.0.1:8123/`. There is nothing to install or build — three.js
 
 ## Testing
 
-The suites run inside the live page against the real world, physics and systems, and they follow real input paths. A fall really falls, a dive really holds its breath, and a broken block is really walked over and picked up. Each suite runs in an isolated test state and restores the game afterwards.
+The suites run inside the live page against the real world, physics and systems, and they follow real input paths. A fall really falls, a dive really holds its breath, and a broken block is really walked over and picked up. Each suite runs in an isolated test state. Afterwards it restores every block it changed, recorded by a write journal on the voxel store, along with the player's position, health, inventory, skills, mode and the time of day.
 
 ```js
+await __pandaria.runAllTests()           // every suite below, plus a leak check between suites:
+                                         // any suite that leaves a trace is reported by suite and field
 __pandaria.runCollisionTests()           // 34  sub-stepped AABB, tunnelling, chunk seams, flight
 await __pandaria.runIslandAccessTests()  //  6  every floating island reachable on foot
 __pandaria.runWorldGuardTests()          //  6  bedrock, void recovery, safe spawns

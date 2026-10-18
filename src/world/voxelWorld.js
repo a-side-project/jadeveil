@@ -14,6 +14,7 @@ export class VoxelWorld {
     this.dirty = new Set();
     // 只因光照变化而需要重建的区块：不抢在编辑当帧重建，由区块管理器分帧处理
     this.lightDirty = new Set();
+    this.journal = null; // 写入日志（beginJournal 开启；自动化测试还原世界用）
   }
 
   /**
@@ -56,6 +57,27 @@ export class VoxelWorld {
     return c[this.idx(x & 15, y, z & 15)];
   }
 
+  /**
+   * 写入日志：开启期间，每一格第一次被改之前的方块记进 journal（任何写法都记：set / setRaw / fillColumnRaw）。
+   * 自动化测试用它在套件结束时把世界原样还原 —— 只靠「编辑事件」不够：直接调 world.set 的测试
+   * 曾在出生点下面挖了洞没被还原，玩家回到出生点就掉下去摔死。
+   */
+  beginJournal() {
+    this.journal = new Map();
+  }
+
+  /** 结束日志，返回 Map<"x,y,z", 原方块 id>。 */
+  endJournal() {
+    const j = this.journal || new Map();
+    this.journal = null;
+    return j;
+  }
+
+  _log(x, y, z, prev) {
+    const k = `${x},${y},${z}`;
+    if (!this.journal.has(k)) this.journal.set(k, prev);
+  }
+
   set(x, y, z, id) {
     if (y < 0 || y >= CH) return;
     const cx = x >> 4;
@@ -63,6 +85,7 @@ export class VoxelWorld {
     const c = this.ensureChunk(cx, cz);
     const i = this.idx(x & 15, y, z & 15);
     const prev = c[i];
+    if (this.journal && prev !== id) this._log(x, y, z, prev);
     c[i] = id;
     this.dirty.add(VoxelWorld.key(cx, cz));
     // 光照增量更新（world/lighting.js）：光照变化波及的区块一起重建网格
@@ -88,7 +111,9 @@ export class VoxelWorld {
   setRaw(x, y, z, id) {
     if (y < 0 || y >= CH) return;
     const c = this.ensureChunk(x >> 4, z >> 4);
-    c[this.idx(x & 15, y, z & 15)] = id;
+    const i = this.idx(x & 15, y, z & 15);
+    if (this.journal && c[i] !== id) this._log(x, y, z, c[i]);
+    c[i] = id;
   }
 
   /** 整列写入（基岩层、地形填充），避免逐格调用开销。 */
@@ -98,7 +123,11 @@ export class VoxelWorld {
     const lz = z & 15;
     const a = Math.max(0, y0);
     const b = Math.min(CH - 1, y1);
-    for (let y = a; y <= b; y++) c[(y * CW + lz) * CW + lx] = id;
+    for (let y = a; y <= b; y++) {
+      const i = (y * CW + lz) * CW + lx;
+      if (this.journal && c[i] !== id) this._log(x, y, z, c[i]);
+      c[i] = id;
+    }
   }
 
   /** 只在空气处写入（地形生成用，避免覆盖已有结构）。 */

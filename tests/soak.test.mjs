@@ -111,7 +111,7 @@ export const SOAK_TEST_SOURCE = `
   skills.cancel();
   inventory.load(keep.inv);
   health.load(keep.hp);
-  skills.learned = new Set(keep.skills.learned); skills.practice = keep.skills.practice;
+  skills.load(keep.skills);
   P.setGameMode(keep.mode, false);
   P.daynight.time = keep.time; P.daynight.playing = keep.playing;
   player.mode = keep.cam;

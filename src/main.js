@@ -1191,6 +1191,33 @@ async function boot() {
     runWorldTests: () => runSuite(WORLD_TEST_SOURCE),
     /** 长时间随机操作测试：固定种子的随机玩家跑几千帧，每帧检查不变量。 */
     runSoakTests: () => runSuite(SOAK_TEST_SOURCE),
+    /**
+     * 跑全部套件，并在每个套件前后比对玩家与世界的状态：任何套件留下痕迹（挖的洞、扣的血、
+     * 学会的技能、改过的背包）都会按套件名、字段名报出来。返回 { suites, leaks, errors, pass }。
+     */
+    runAllTests: async () => {
+      const P = window.__pandaria;
+      if (state.mode === "title") P.quickStart();
+      const snap = () => ({
+        mode: state.mode, hp: health.hp, air: +health.air.toFixed(1), pos: player.position.toArray().map((v) => +v.toFixed(2)).join(","),
+        inv: JSON.stringify(inventory.serialize()), skills: JSON.stringify(skills.serialize()), gameMode: game.mode,
+        edits: edits.edits.size, mounted: mount.active,
+      });
+      const suites = {}, leaks = [];
+      const names = ["runCollisionTests", "runIslandAccessTests", "runWorldGuardTests", "runWaterTests", "runQualityTests",
+        "runRpgTests", "runNpcTests", "runUxTests", "runWorldTests", "runSoakTests"];
+      for (const n of names) {
+        const before = snap();
+        const r = await P[n]();
+        const list = Array.isArray(r) ? r : r.results || [];
+        const failed = list.filter((t) => !t.pass);
+        suites[n] = { passed: list.length - failed.length, total: list.length, failed: failed.map((t) => t.test || t.name) };
+        const after = snap();
+        for (const k in before) if (before[k] !== after[k]) leaks.push({ suite: n, field: k, before: before[k], after: after[k] });
+      }
+      const pass = Object.values(suites).every((s) => !s.failed.length) && !leaks.length && !app.errors.length;
+      return { suites, leaks, errors: app.errors.slice(0, 5), pass };
+    },
   };
 
   /**
@@ -1198,28 +1225,32 @@ async function boot() {
    * 结束后恢复原状态。（碰撞测试会故意让玩家掉出世界，不能因此把后续套件锁在死亡界面里。）
    */
   function runSuite(src) {
-    const prev = { mode: state.mode, pos: player.position.clone(), yaw: player.yaw, pitch: player.pitch, cam: player.mode };
-    // 测试不能污染世界：记下套件运行期间每一格第一次被改之前的方块与存档差量，结束时原样还原
-    // （否则测试砌的墙、放的方块会进玩家的存档）
-    const original = new Map();
-    const unhook = events.on("world:edit", ({ x, y, z, prev: was }) => {
-      const k = `${x},${y},${z}`;
-      if (!original.has(k)) original.set(k, { was, edit: edits.edits.has(k) ? edits.edits.get(k) : undefined });
-    });
+    // 测试不能污染玩家的游戏：套件开始前把世界与玩家状态整体快照，结束时原样还原。
+    //   · 世界：VoxelWorld 写入日志记下每一格第一次被改之前的方块（任何写法都逃不掉），
+    //     存档差量整张表快照 —— 否则测试砌的墙、挖的洞会留在世界里、进玩家的存档
+    //   · 玩家：位置、朝向、视角、生命、背包、技能、模式、时间
+    const prev = {
+      mode: state.mode, pos: player.position.clone(), yaw: player.yaw, pitch: player.pitch, cam: player.mode,
+      health: health.serialize(), inv: inventory.serialize(), skills: skills.serialize(), gameMode: game.mode,
+      time: daynight.time, playing: daynight.playing, edits: new Map(edits.edits),
+    };
+    world.beginJournal();
     const restoreWorld = () => {
-      unhook();
-      if (!original.size) return;
+      const journal = world.endJournal();
       physics.pending.clear();
       const L = world.lighting;
       L.suspended = true;
-      for (const [k, o] of original) {
+      for (const [k, was] of journal) {
         const [x, y, z] = k.split(",").map(Number);
-        edits.set(x, y, z, o.was); // 走正常编辑路径：火把、导航网格跟着恢复
-        if (o.edit === undefined) edits.edits.delete(k); else edits.edits.set(k, o.edit);
+        if (world.get(x, y, z) !== was) edits.set(x, y, z, was); // 走正常编辑路径：火把、导航网格跟着恢复
       }
+      edits.edits.clear();
+      for (const [k, v] of prev.edits) edits.edits.set(k, v);
       L.suspended = false;
-      L.computeAll();
-      world.markAllDirty();
+      if (journal.size) {
+        L.computeAll();
+        world.markAllDirty();
+      }
       physics.pending.clear();
     };
     if (mount.active) mount.dismiss();
@@ -1228,8 +1259,16 @@ async function boot() {
     interaction.enabled = true;
     const restore = () => {
       restoreWorld();
+      if (mount.active) mount.dismiss();
+      skills.cancel();
       if (health.dead) health.respawn();
       document.getElementById("death")?.classList.remove("open");
+      health.load(prev.health);
+      inventory.load(prev.inv);
+      skills.load(prev.skills);
+      setGameMode(prev.gameMode, false);
+      daynight.time = prev.time;
+      daynight.playing = prev.playing;
       state.mode = prev.mode === "dead" ? "play" : prev.mode;
       player.position.copy(prev.pos);
       player.velocity.set(0, 0, 0);
@@ -1237,6 +1276,7 @@ async function boot() {
       player.pitch = player.targetPitch = prev.pitch;
       player.mode = prev.cam;
       player.flying = false;
+      player.keys.clear();
       chunks.update(player.position, true);
     };
     let res;

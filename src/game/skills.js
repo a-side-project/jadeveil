@@ -359,9 +359,11 @@ export class PlayerSkills {
     return { learned: [...this.learned], practice: this.practice };
   }
 
+  /** 读档：已学技能 = 默认技能 + 存档里记的（替换，而不是叠加到当前局 —— 否则读一个旧档，当前局学会的技能还在）。 */
   load(d) {
     if (!d) return;
+    this.learned = new Set(PLAYER_SKILLS.filter((s) => !s.learn).map((s) => s.id));
     if (Array.isArray(d.learned)) for (const id of d.learned) if (this.def(id)) this.learned.add(id);
-    if (Number.isFinite(d.practice)) this.practice = d.practice;
+    this.practice = Number.isFinite(d.practice) ? d.practice : 0;
   }
 }

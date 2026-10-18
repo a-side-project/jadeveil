@@ -244,7 +244,7 @@ export const WORLD_TEST_SOURCE = `
     const learned = skills.learned.has("crescent");
     cool();
     const fired = skills.use("crescent");
-    skills.learned = new Set(keep.learned); skills.practice = keep.practice;
+    skills.load(keep);
     skills.projectiles.length = 0;
     resetDummy();
     return { lockedFirst, practice: Math.min(20, skills.practice), learned, fired, pass: lockedFirst && learned && fired };
