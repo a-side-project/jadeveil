@@ -73,10 +73,12 @@ export class VoxelWorld {
     // 边界方块会影响邻区块的可见面
     const lx = x & 15;
     const lz = z & 15;
-    if (lx === 0) this.dirty.add(VoxelWorld.key(cx - 1, cz));
-    if (lx === 15) this.dirty.add(VoxelWorld.key(cx + 1, cz));
-    if (lz === 0) this.dirty.add(VoxelWorld.key(cx, cz - 1));
-    if (lz === 15) this.dirty.add(VoxelWorld.key(cx, cz + 1));
+    // 边界方块会影响邻区块的可见面、AO、平滑光照；角上的方块还会影响斜对角那一块
+    const ex = lx === 0 ? -1 : lx === 15 ? 1 : 0;
+    const ez = lz === 0 ? -1 : lz === 15 ? 1 : 0;
+    if (ex) this.dirty.add(VoxelWorld.key(cx + ex, cz));
+    if (ez) this.dirty.add(VoxelWorld.key(cx, cz + ez));
+    if (ex && ez) this.dirty.add(VoxelWorld.key(cx + ex, cz + ez));
   }
 
   /**

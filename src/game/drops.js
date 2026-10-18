@@ -61,13 +61,14 @@ export class DropManager {
    */
   update(dt, player, inventory) {
     const w = this.world;
-    const target = new THREE.Vector3(player.position.x, player.position.y + 0.9, player.position.z);
+    const target = (this._target ||= new THREE.Vector3()).set(player.position.x, player.position.y + 0.9, player.position.z);
+    const toP = this._toP || (this._toP = new THREE.Vector3());
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const d = this.drops[i];
       d.age += dt;
       if (d.age > LIFETIME) { this._remove(i); continue; }
 
-      const toP = target.clone().sub(d.pos);
+      toP.copy(target).sub(d.pos);
       const dist = toP.length();
       const canPick = d.age > PICKUP_DELAY && !player.mount && inventory.canFit(d.id, d.count);
 

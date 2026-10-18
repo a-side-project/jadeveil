@@ -12,6 +12,8 @@ import { MAX_HP, MAX_AIR } from "../game/health.js";
 import { DRAGON_SKILLS, ENERGY_MAX } from "../mount/dragon.js";
 import { events } from "../game/events.js";
 import { renderText, setPixelText } from "./pixelfont.js";
+import { pixelCanvas, DRAGON_ICONS, DRAGON_LEGEND, PLAYER_ICONS, JADE_LEGEND } from "./skillIcons.js";
+import { PLAYER_SKILLS } from "../game/skills.js";
 
 const C = {
   gold: "#ffe08a",
@@ -26,24 +28,6 @@ const C = {
 /* ------------------------------------------------------------------ */
 /* 像素图标                                                             */
 /* ------------------------------------------------------------------ */
-
-function pixelCanvas(rows, legend, scale = 3) {
-  const h = rows.length, w = rows[0].length;
-  const c = document.createElement("canvas");
-  c.width = w * scale;
-  c.height = h * scale;
-  const ctx = c.getContext("2d");
-  rows.forEach((row, y) => {
-    [...row].forEach((ch, x) => {
-      const col = legend[ch];
-      if (!col) return;
-      ctx.fillStyle = col;
-      ctx.fillRect(x * scale, y * scale, scale, scale);
-    });
-  });
-  c.style.imageRendering = "pixelated";
-  return c;
-}
 
 const HEART = [
   ".KK...KK.",
@@ -72,73 +56,14 @@ const BUBBLE = [
 ];
 const BUBBLE_LEGEND = { K: "#0b2a44", B: "#3f9fe0", W: "#d8f2ff", D: "#24679a" };
 
-/** 技能图标（12×12 像素） */
-const SKILL_ICONS = {
-  breath: [
-    "............",
-    "...PP.......",
-    "..PHHP..pp..",
-    ".PHHHHPppp..",
-    ".PHHHHHPPPp.",
-    "..PHHHHHHPPp",
-    "..PHHHHHHPPp",
-    ".PHHHHHPPPp.",
-    ".PHHHHPppp..",
-    "..PHHP..pp..",
-    "...PP.......",
-    "............",
-  ],
-  fireball: [
-    "............",
-    "....pppp....",
-    "..ppPPPPpp..",
-    "..pPHHHHPp..",
-    ".pPHHWWHHPp.",
-    ".pPHWWWWHPp.",
-    ".pPHWWWWHPp.",
-    ".pPHHWWHHPp.",
-    "..pPHHHHPp..",
-    "..ppPPPPpp..",
-    "....pppp....",
-    "............",
-  ],
-  dash: [
-    "............",
-    "..P.....P...",
-    "..PP....PP..",
-    "..PHP...PHP.",
-    "..PHHP..PHHP",
-    "..PHHHP.PHHH",
-    "..PHHHP.PHHH",
-    "..PHHP..PHHP",
-    "..PHP...PHP.",
-    "..PP....PP..",
-    "..P.....P...",
-    "............",
-  ],
-  roar: [
-    "............",
-    "........p...",
-    "......p..p..",
-    "..PP...p..p.",
-    ".PHHP...p.p.",
-    "PHHHHP..p..p",
-    "PHHHHP..p..p",
-    ".PHHP...p.p.",
-    "..PP...p..p.",
-    "......p..p..",
-    "........p...",
-    "............",
-  ],
-};
-const SKILL_LEGEND = { P: "#9b3fe0", H: "#e7a6ff", W: "#ffffff", p: "#5e1f99" };
-
 /* ------------------------------------------------------------------ */
 
 // 底部状态栏宽度 = 快捷栏外宽：9 格 × 50 + 8 个 2px 间隙 + 两侧 6px 内边距
 const BAR_W = 9 * 50 + 8 * 2 + 12;
 // 技能栏 4 格与快捷栏等宽：(BAR_W - 内边距 12 - 3 个间隙) / 4
 const SKILL_W = (BAR_W - 12 - 3 * 2) / 4;
+// 人物技能栏 6 格，同样与快捷栏等宽
+const PSKILL_W = (BAR_W - 12 - 5 * 2) / 6;
 
 /* ------------------------------------------------------------------ */
 
@@ -159,6 +84,7 @@ export class RpgHud {
     this._buildVitals();
     this._buildHotbar();
     this._buildSkillbar();
+    this._buildPlayerSkillbar();
     this._buildOverlayLayers();
     this._bindEvents();
     this.refreshHotbar();
@@ -168,7 +94,7 @@ export class RpgHud {
     const s = document.createElement("style");
     s.textContent = `
       /* 底部状态栏：一个竖向容器，三行等宽居中 —— 血条 / (骑乘时)能量 / 快捷栏或技能栏 */
-      #bottomhud { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+      #bottomhud { position: absolute; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%);
         width: ${BAR_W}px; display: flex; flex-direction: column; align-items: stretch; gap: 5px; pointer-events: none; }
       #vitals { display: flex; justify-content: space-between; align-items: flex-end; height: 18px; padding: 0 6px; }
       #vitals .row { display: flex; gap: 2px; }
@@ -193,6 +119,21 @@ export class RpgHud {
       #skills .sk .cdt { position: absolute; left: 7px; top: 7px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; }
       #skills .sk.active { outline: 3px solid #e08aff; outline-offset: -3px; }
       #skills .sk.low { filter: grayscale(0.8) brightness(0.6); }
+      /* 人物技能栏（冒险模式）：与快捷栏同一位置、同宽 */
+      #pskills { display: none; gap: 2px; padding: 6px; pointer-events: auto; }
+      #pskills.on { display: flex; }
+      #pskills .sk { width: ${PSKILL_W}px; height: 50px; position: relative; display: flex; align-items: center; overflow: hidden; }
+      #pskills .sk canvas.ic { width: 30px; height: 30px; margin-left: 5px; flex: none; image-rendering: pixelated; }
+      #pskills .sk .nm { margin-left: 5px; display: flex; flex-direction: column; gap: 3px; }
+      #pskills .sk .cd { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(2,10,8,0.72); }
+      #pskills .sk .cdt { position: absolute; left: 5px; top: 10px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+      #pskills .sk.locked canvas.ic, #pskills .sk.locked .nm { filter: grayscale(1) brightness(0.45); }
+      #pskills .sk .lock { position: absolute; left: 0; right: 0; bottom: 3px; display: none; justify-content: center; }
+      #pskills .sk.locked .lock { display: flex; }
+      #modebadge { position: absolute; left: 6px; bottom: 100%; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+      /* 触屏：技能由右下的环形技能盘操作，底部只留血条与（建造模式的）快捷栏 */
+      body.touch #pskills, body.touch #skills { display: none !important; }
+      body.touch #mounthud .label .r { display: none; }
       #hurtflash { position: fixed; inset: 0; pointer-events: none; z-index: 20; opacity: 0;
         background: radial-gradient(ellipse at center, rgba(160,0,0,0) 45%, rgba(170,0,0,0.75) 100%); }
       #dmglayer { position: fixed; inset: 0; pointer-events: none; z-index: 9; overflow: hidden; } /* 世界空间的标注，压在 HUD 之下 */
@@ -334,7 +275,7 @@ export class RpgHud {
     for (const sk of DRAGON_SKILLS) {
       const s = document.createElement("div");
       s.className = "sk slot";
-      const ic = pixelCanvas(SKILL_ICONS[sk.id], SKILL_LEGEND, 3);
+      const ic = pixelCanvas(DRAGON_ICONS[sk.id], DRAGON_LEGEND, 3);
       ic.className = "ic";
       s.appendChild(ic);
       const nm = document.createElement("div");
@@ -358,6 +299,52 @@ export class RpgHud {
       slots.appendChild(s);
       this.skillEls[sk.id] = { el: s, cd, cdt, lastT: "" };
     }
+  }
+
+  /* ---------------- 人物技能栏（冒险模式时替换快捷栏） ---------------- */
+  _buildPlayerSkillbar() {
+    const el = document.createElement("div");
+    el.id = "pskills";
+    this.bottom.insertBefore(el, this.hotbarEl);
+    this.pskillbar = el;
+    this.pskillEls = {};
+    for (const sk of PLAYER_SKILLS) {
+      const s = document.createElement("div");
+      s.className = "sk slot";
+      s.dataset.skill = sk.id;
+      const ic = pixelCanvas(PLAYER_ICONS[sk.id], JADE_LEGEND, 3);
+      ic.className = "ic";
+      s.appendChild(ic);
+      const nm = document.createElement("div");
+      nm.className = "nm";
+      for (const [k, line] of sk.short.entries()) {
+        const t = document.createElement("div");
+        setPixelText(t, line, { color: k === 0 ? C.bone : C.dim, scale: 1 });
+        nm.appendChild(t);
+      }
+      s.appendChild(nm);
+      const cd = document.createElement("div");
+      cd.className = "cd";
+      s.appendChild(cd);
+      const cdt = document.createElement("div");
+      cdt.className = "cdt";
+      s.appendChild(cdt);
+      const lock = document.createElement("div");
+      lock.className = "lock";
+      s.appendChild(lock);
+      const key = document.createElement("span");
+      key.className = "key";
+      setPixelText(key, sk.key, { color: C.jade, scale: 1 });
+      s.appendChild(key);
+      s.addEventListener("click", () => this.skills?.use(sk.id));
+      el.appendChild(s);
+      this.pskillEls[sk.id] = { el: s, cd, cdt, lock, lastT: "", lastLock: "" };
+    }
+  }
+
+  /** 冒险 / 建造模式（由 main.js 设置）。 */
+  setGameMode(mode) {
+    this.gameMode = mode;
   }
 
   /* ---------------- 叠加层 ---------------- */
@@ -440,7 +427,10 @@ export class RpgHud {
     const airN = Math.ceil(h.air);
     const showAir = h.air < MAX_AIR - 0.01;
     // 整行用 visibility（保留占位，心形不会左右跳）；子元素不能再单独设 visible，否则会盖过父级的 hidden
-    this.vitals.querySelector(".air").style.visibility = showAir ? "visible" : "hidden";
+    if (showAir !== this._showAir) {
+      this._showAir = showAir;
+      (this._airRow ||= this.vitals.querySelector(".air")).style.visibility = showAir ? "visible" : "hidden";
+    }
     if (airN !== this._lastAir) {
       this._lastAir = airN;
       this.airEls.forEach((c, i) => (c.style.opacity = i < airN ? "1" : "0"));
@@ -450,7 +440,31 @@ export class RpgHud {
     const m = this.mount;
     const mounted = !!(m && m.active);
     this.skillbar.classList.toggle("on", mounted);
-    this.hotbarEl.style.display = mounted ? "none" : "flex";
+    const adventure = this.gameMode !== "build";
+    this.pskillbar.classList.toggle("on", !mounted && adventure);
+    this.hotbarEl.style.display = mounted || adventure ? "none" : "flex";
+    if (!mounted && adventure && this.skills) {
+      const P = this.skills;
+      for (const sk of PLAYER_SKILLS) {
+        const s = this.pskillEls[sk.id];
+        const cd = P.cooldowns[sk.id] || 0;
+        s.cd.style.height = sk.cd ? `${Math.min(1, cd / sk.cd) * 100}%` : "0%";
+        const t = cd > 0.05 && sk.cd > 1 ? (cd >= 10 ? String(Math.ceil(cd)) : cd.toFixed(1)) : "";
+        if (t !== s.lastT) {
+          s.lastT = t;
+          s.cdt.innerHTML = "";
+          if (t) s.cdt.appendChild(renderText(t, { color: "#ffffff", outline: "#000", scale: 2 }));
+        }
+        const locked = !P.learned.has(sk.id);
+        s.el.classList.toggle("locked", locked);
+        const prog = P.progress(sk.id);
+        const lt = prog ? `${prog.have}/${prog.need}` : "";
+        if (lt !== s.lastLock) {
+          s.lastLock = lt;
+          setPixelText(s.lock, lt, { color: C.gold, outline: "#000", scale: 1 });
+        }
+      }
+    }
     if (mounted) {
       this.energyFill.style.width = `${(m.energy / ENERGY_MAX) * 100}%`;
       for (const sk of DRAGON_SKILLS) {

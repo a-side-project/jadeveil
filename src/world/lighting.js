@@ -25,7 +25,9 @@ const EMIT = new Uint8Array(256);
 BLOCKS.forEach((b, id) => {
   if (!b) return;
   if (b.opaque && id !== 0) ATTEN[id] = 0;
-  else if (b.liquid) ATTEN[id] = 2;
+  // 水源（湖、池塘）让水下变暗；流动的水薄、在不停变化，按空气算 ——
+  // 否则一道瀑布每刻改几十格，每格都要重算一次光照
+  else if (b.liquid) ATTEN[id] = b.flow ? 1 : 2;
   else if (b.cutout && b.solid) ATTEN[id] = 2; // 树叶 / 石狮：比空气更暗一点
   else ATTEN[id] = 1;
   if (b.light) EMIT[id] = b.model === "torch" ? 14 : MAX;
@@ -127,10 +129,11 @@ export class LightEngine {
     const cx = x >> 4, cz = z >> 4;
     this.changed.add(VoxelWorld.key(cx, cz));
     const lx = x & 15, lz = z & 15;
-    if (lx === 0) this.changed.add(VoxelWorld.key(cx - 1, cz));
-    if (lx === 15) this.changed.add(VoxelWorld.key(cx + 1, cz));
-    if (lz === 0) this.changed.add(VoxelWorld.key(cx, cz - 1));
-    if (lz === 15) this.changed.add(VoxelWorld.key(cx, cz + 1));
+    const ex = lx === 0 ? -1 : lx === 15 ? 1 : 0;
+    const ez = lz === 0 ? -1 : lz === 15 ? 1 : 0;
+    if (ex) this.changed.add(VoxelWorld.key(cx + ex, cz));
+    if (ez) this.changed.add(VoxelWorld.key(cx, cz + ez));
+    if (ex && ez) this.changed.add(VoxelWorld.key(cx + ex, cz + ez));
   }
 
   _id(x, y, z) { return this.world.get(x, y, z); }
@@ -164,12 +167,17 @@ export class LightEngine {
       for (let lz = 0; lz < CW; lz++) {
         for (let lx = 0; lx < CW; lx++) {
           let level = MAX;
+          // top：这一列阳光第一次被削弱的高度（任何衰减光的方块都算：灯笼、树叶、水，不只是不透明方块）。
+          // 邻列在这个高度以下的露天格子是横向扩散的起点 —— 旧版只认不透明方块，
+          // 灯笼底下就收不到旁边漫过来的天光，整体重算比增量更新暗（14 vs 12..9）
           let top = -1;
           for (let y = CH - 1; y >= 0; y--) {
             const i = (y * CW + lz) * CW + lx;
             const a = ATTEN[chunk[i]];
-            if (a === 0) { top = y; break; }
-            if (a > 1) level = Math.max(0, level - (a - 1));
+            if (a !== 1 && top < 0) top = y;
+            if (a === 0) break;
+            // 与 _spread 同一条规则：只有满级阳光穿过空气垂直向下不衰减，其余每格扣透光代价
+            if (!(a === 1 && level === MAX)) level = Math.max(0, level - a);
             light[i] = level << 4;
           }
           tops.set(((cx * CW + lx + 512) | ((cz * CW + lz + 512) << 10)), top);
@@ -234,8 +242,9 @@ export class LightEngine {
         if (ny < 0 || ny >= CH) continue;
         const a = ATTEN[this._id(nx, ny, nz)];
         if (a === 0) continue;
-        // 阳光直射：等级 15 往正下方穿过空气不衰减（与 computeAll 的逐列灌注一致：水 / 树叶只扣 a - 1）
-        const nl = sky && d === DOWN && L === MAX ? MAX - (a - 1) : L - a;
+        // 阳光直射：等级 15 往正下方穿过空气不衰减；进入水、树叶等照常扣代价（与 computeAll 的逐列灌注完全一致 ——
+        // 旧版两边规则不同，在水池边一编辑，那一片水下就比周围暗一截）
+        const nl = sky && d === DOWN && L === MAX && a === 1 ? MAX : L - a;
         if (nl <= 0) continue;
         if (sky) {
           if (this.sky(nx, ny, nz) >= nl) continue;
@@ -278,7 +287,7 @@ export class LightEngine {
         const nl = get(nx, ny, nz);
         if (!nl) continue;
         // 比它暗的是它传出去的光（天空光往正下方的 15 也是它带下去的）→ 一起清掉
-        const fromIt = nl < L || (sky && d === DOWN && L === MAX && nl === MAX);
+        const fromIt = nl < L || (sky && d === DOWN && L === MAX && nl === MAX && ATTEN[this._id(nx, ny, nz)] === 1);
         if (fromIt) {
           // 自身发光的格子保留光源等级，之后重新扩散
           const e = !sky ? EMIT[this._id(nx, ny, nz)] : 0;
@@ -300,6 +309,8 @@ export class LightEngine {
   update(x, y, z, prevId, id) {
     this.changed = new Set();
     if (!this.data.size) return this.changed;
+    // 透光与发光都没变（空气 ↔ 流动水、花 ↔ 空气）：光照不受影响
+    if (ATTEN[prevId] === ATTEN[id] && EMIT[prevId] === EMIT[id]) return this.changed;
     const q = this.q;
 
     // ---- 方块光 ----
@@ -328,6 +339,37 @@ export class LightEngine {
         if (ny >= 0 && ny < CH && this.sky(nx, ny, nz) > 1) q.push(pack(nx, ny, nz));
       }
       if (y + 1 >= CH) { this._setSky(x, y, z, MAX); q.push(pack(x, y, z)); }
+    }
+    this._spread(true);
+    return this.changed;
+  }
+
+  /**
+   * 批量「打开」格子（爆炸炸出一个坑：很多方块同时变成空气）。
+   * 变透光只会让光变多，不需要逐格做移除洪泛 —— 只有被炸掉的发光体（灯笼）要先把它的光清掉；
+   * 然后从所有被打开格子的邻居一起重新扩散一次。比逐格调用 update() 快一个数量级。
+   * @param {Array<[number, number, number, number]>} cells [x, y, z, 原方块 id]
+   * @returns {Set<number>} 光照变化过的区块
+   */
+  relightOpened(cells) {
+    this.changed = new Set();
+    if (!this.data.size) return this.changed;
+    const q = this.q;
+    q.clear();
+    for (const [x, y, z, prev] of cells) if (EMIT[prev]) this._remove(false, x, y, z);
+    for (const [x, y, z] of cells) {
+      for (const D of DIRS) {
+        const nx = x + D[0], ny = y + D[1], nz = z + D[2];
+        if (ny >= 0 && ny < CH && this.block(nx, ny, nz) > 1) q.push(pack(nx, ny, nz));
+      }
+    }
+    this._spread(false);
+    q.clear();
+    for (const [x, y, z] of cells) {
+      for (const D of DIRS) {
+        const nx = x + D[0], ny = y + D[1], nz = z + D[2];
+        if (ny >= 0 && ny < CH && this.sky(nx, ny, nz) > 1) q.push(pack(nx, ny, nz));
+      }
     }
     this._spread(true);
     return this.changed;

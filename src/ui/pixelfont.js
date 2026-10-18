@@ -80,7 +80,9 @@ export const GLYPHS = G;
 export const GLYPH_W = 5;
 export const GLYPH_H = 7;
 
+// 渲染缓存：有上限的 LRU（坐标、帧率这类不断变化的文字会源源不断产生新条目，不能无限增长）
 const cache = new Map();
+const CACHE_MAX = 800;
 
 /** 文本像素宽度（含字间距）。 */
 export function textWidth(text, scale = 2, tracking = 1) {
@@ -122,7 +124,11 @@ export function renderText(text, opts = {}) {
     return c;
   };
   const cached = cache.get(key);
-  if (cached) return copy(cached);
+  if (cached) {
+    cache.delete(key); // 刷新 LRU 顺序
+    cache.set(key, cached);
+    return copy(cached);
+  }
 
   const canvas = document.createElement("canvas");
   canvas.width = canvasW;
@@ -151,6 +157,7 @@ export function renderText(text, opts = {}) {
   put(0, 0, color);
 
   cache.set(key, canvas);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
   return copy(canvas);
 }
 

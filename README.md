@@ -38,7 +38,7 @@
   <img alt="Single player" src="https://img.shields.io/badge/MODE-SINGLE%20PLAYER-c0392b?style=for-the-badge&labelColor=0b1014">
   <img alt="Desktop, tablet and phone" src="https://img.shields.io/badge/PLAYS%20ON-DESKTOP%20%C2%B7%20TABLET%20%C2%B7%20PHONE-e8b44a?style=for-the-badge&labelColor=0b1014">
   <img alt="Saves" src="https://img.shields.io/badge/SAVES-INDEXEDDB%20%2B%20FILE-9b3fe0?style=for-the-badge&labelColor=0b1014">
-  <img alt="Tests" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-84%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
+  <img alt="Tests" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-107%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
 </p>
 
 <p align="center">
@@ -129,17 +129,37 @@ The game shell is precached at install time, and every module, texture and sound
     </td>
     <td valign="top">
       <h3>Full quality on strong machines, smooth on weak ones</h3>
-      <p>Five graphics settings are available: AUTO, LOW, MED, HIGH and ULTRA. Each one actually removes work — resolution, shadows, bloom, god rays, reflections, view distance and particles — instead of only hiding it. Passes that would contribute nothing are skipped every frame. AUTO starts from a GPU and device check, so high-end desktops run ULTRA, and it steps down one setting only after sustained low frame rates, telling the player where to change it. On an Apple M3 Max, a frame costs 0.46 ms on LOW and 5.65 ms on ULTRA.</p>
+      <p>Five graphics settings are available: AUTO, LOW, MED, HIGH and ULTRA. Each one actually removes work — resolution, shadows, bloom, god rays, reflections, view distance and particles — instead of only hiding it. Passes that would contribute nothing are skipped every frame. AUTO starts from a GPU and device check, so high-end desktops run ULTRA, and it steps down one setting only after sustained low frame rates, telling the player where to change it. Once the slowdown passes, 20 seconds of headroom step it back up, never above the detected setting. On an Apple M3 Max, a frame costs 0.46 ms on LOW and 5.65 ms on ULTRA.</p>
     </td>
   </tr>
   <tr>
     <td valign="top">
       <h3>Built for touch, not adapted to it</h3>
-      <p>On phones and tablets the game uses a floating analog stick: a light push walks and the edge sprints. Dragging on the right turns the camera and tapping attacks, and multi-touch works throughout. Jump, place, crouch, descend, the menus and the dragon skills all have their own buttons, placed within the device's safe areas. The interface keeps touch targets large on small screens.</p>
+      <p>On phones and tablets the game uses a floating analog stick: a light push walks and the edge sprints. Dragging on the right turns the camera and tapping attacks, and multi-touch works throughout. Jump, crouch, descend and the menus have their own buttons, placed within the device's safe areas. The interface keeps touch targets large on small screens.</p>
     </td>
     <td valign="top">
       <h3>A proper settings window</h3>
       <p>Settings open in a centred window with GRAPHICS, CONTROLS and AUDIO tabs. Every key is listed with how it works (HOLD, PRESS or CLICK), crouch and sprint can each be set to hold or toggle, and RESTORE DEFAULTS resets everything with a confirmation. The cursor is pixel art. Any open window releases the mouse, and closing it never leaves the game stuck without control.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Two ways to play, skills you learn by doing</h3>
+      <p>ADVENTURE is the default: the Jade Blade is in hand and the left mouse button slashes. There are no classes, skill points or skill trees. You start with practical skills (lunge, whirling blade, mend, evade), and the Jade Crescent unlocks after 20 blade hits. BUILD is Minecraft: break, place and the full hotbar. <code>B</code> switches between them.</p>
+    </td>
+    <td valign="top">
+      <h3>A world that reacts</h3>
+      <p>Water flows with eight levels the way Minecraft water does: break a dam and the pond pours out, and cut off the source and the stream dries up. Sand falls and flowers drop when their soil is removed. The dragon's fireball blasts craters that throw solid debris, and its breath burns wood, leaves and bamboo. Terrain damage can be turned off in settings.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Frameworks that keep fixes fixed</h3>
+      <p>A schedule table decides which systems run in each game state, so pausing freezes the world and the dead never autosave. One input router owns every key. Each mode of travel declares its own terrain rules, so the flying mount treats water as a floor. Structures claim their footprint during world generation, and a world audit (<code>npm test</code>) checks for overlaps, coplanar faces, floating blocks and unreachable stations. A seeded soak test drives a random player for 4,200 frames and checks eight invariants on every frame.</p>
+    </td>
+    <td valign="top">
+      <h3>A skill wheel built for thumbs</h3>
+      <p>On touch screens the skills sit on a wheel around the main attack button and change with the context: blade skills on foot, dragon skills when mounted, place in build mode. The wheel is laid out for the real screen, so buttons never overlap each other, the minimap or the screen edge, and each one shows its cooldown and learning progress.</p>
     </td>
   </tr>
 </table>
@@ -154,9 +174,13 @@ The game shell is precached at install time, and every module, texture and sound
 | Sprint | `Shift` | hold (or toggle) |
 | Crouch — slower, and you cannot walk off ledges | `C` | hold (or toggle) |
 | Jump; hold to swim up or ascend | `Space` | press |
-| Attack target, or break the block under the crosshair | Left mouse | click |
-| Place held block / mount torch on floor or wall | Right mouse | click |
-| Select hotbar slot | `1`–`9` · mouse wheel | press |
+| Switch ADVENTURE ↔ BUILD | `B` | press |
+| Adventure: Jade Slash | Left mouse · `1` | click |
+| Adventure: lunge · whirling blade · crescent · mend | `2` `3` `4` `5` | press |
+| Adventure: evade | `Q` | press |
+| Build: attack target, or break the block under the crosshair | Left mouse | click |
+| Build: place held block / mount torch on floor or wall | Right mouse | click |
+| Build: select hotbar slot | `1`–`9` · mouse wheel | press |
 | Inventory and build catalog | `E` | press |
 | Summon / dismiss the Ender Dragon | `F` | press |
 | Dragon breath (left mouse also works) | `1` while mounted | hold |
@@ -175,13 +199,15 @@ The game shell is precached at install time, and every module, texture and sound
 | Move — push to the edge to sprint | Left thumb anywhere on the left side (floating stick) |
 | Look around | Drag on the right side |
 | Attack / break block | Tap the right side |
+| Adventure ↔ build | **BUILD** / **FIGHT** |
+| Main action: slash · place · dragon breath | The large button at the bottom right (hold) |
+| Skills | The wheel around the main button |
 | Jump · swim up · ascend | **JUMP** (hold) |
-| Place block / torch | **PLACE** |
 | Crouch on / off | **CROUCH** |
 | Descend while flying or swimming | **DOWN** (hold) |
 | Select item | Tap a hotbar slot |
 | Pause · inventory · dragon · camera | **MENU** · **BAG** · **DRAGON** · **VIEW** |
-| Dragon skills | Tap a skill slot; hold **BREATH** |
+| Dragon skills | The wheel changes to dragon skills while mounted |
 
 ## Gameplay systems
 
@@ -193,6 +219,9 @@ The game shell is precached at install time, and every module, texture and sound
 | Building | Breaking spawns item drops that magnetize into the pack; placing consumes the held stack | `src/player/interaction.js`, `src/game/drops.js` |
 | Items | Wooden, stone and jade swords (damage, cooldown, knockback, crits); torches with flame particles that emit block light | `src/game/items.js`, `src/game/sprites.js`, `src/game/torches.js` |
 | Combat | Damageable registry, sphere / cone / ray queries, lingering damage zones, floating damage numbers | `src/game/combat.js`, `src/game/dummy.js` |
+| Skills | Class-less blade skills learned by use; cooldowns, forced movement for lunge and evade; ADVENTURE / BUILD modes | `src/game/skills.js`, `src/ui/skillIcons.js` |
+| Block physics | Eight-level flowing water, falling sand, plants that need support; batched ticks | `src/world/blockPhysics.js` |
+| Destruction | Explosion craters with solid debris, burning, batched relight; can be switched off | `src/game/destruction.js` |
 | Mount | Ender Dragon model, flight tuning, banking, energy, four skills, pixel-square VFX | `src/mount/` , `src/fx/fxParticles.js` |
 | Residents | 10 roles on one atlas-skinned instanced rig; POIs, conversations, greetings, look-at, dragon sightings | `src/world/npc.js`, `src/world/navgrid.js` |
 | Saves | IndexedDB autosave, title-screen continue, `.jadeveil` export and import, versioned migration | `src/game/save.js`, `src/game/worldEdits.js` |
@@ -200,7 +229,8 @@ The game shell is precached at install time, and every module, texture and sound
 | Lighting | Sky light + block light flood fill (0–15 per block), smooth per-vertex lighting, incremental relight on edits, light probes for entities | `src/world/lighting.js`, `src/core/entityLight.js` |
 | Day & night | Rayleigh / Mie / ozone atmosphere shared by sky, fog and lights; sun → moon key light; eight-day lunar phases; rotating stars; twilight adaptation | `src/core/atmosphere.js`, `src/core/sky.js`, `src/core/daynight.js` |
 | Graphics | Five settings, a device check, an auto governor, per-frame pass skipping and particle density | `src/core/quality.js`, `src/core/renderer.js` |
-| Devices | Touch controls with an analog stick, a rotate-to-landscape guard, fullscreen with keyboard lock, a ghost-click guard | `src/ui/touchControls.js`, `src/ui/rotateGuard.js`, `src/ui/fullscreen.js` |
+| Devices | Touch controls with an analog stick and a context skill wheel, a rotate-to-landscape guard, fullscreen with keyboard lock, a ghost-click guard | `src/ui/touchControls.js`, `src/ui/rotateGuard.js`, `src/ui/fullscreen.js` |
+| Frameworks | Per-state system schedule, one input router, per-mode terrain rules, generator footprint claims | `src/core/schedule.js`, `src/core/input.js`, `src/player/controller.js`, `src/world/generator.js` |
 
 ## Architecture
 
@@ -300,12 +330,13 @@ src/
 ├── core/                   # Renderer, atmosphere, sky, day/night, graphics settings, entity light, water, particles
 ├── world/                  # Voxel storage, generator, light engine, mesher, atlas, tiles, nav, residents
 ├── player/                 # Controller, avatar (JJ), skin rig, interaction
-├── game/                   # Events, items, inventory, health, combat, drops, torches, saves
+├── game/                   # Events, items, inventory, health, combat, skills, destruction, drops, torches, saves
 ├── mount/                  # Ender Dragon model and mount controller
 ├── fx/                     # Pixel-square particle pool
 ├── audio/                  # Audio manager (CC0 / CC-BY sound effects)
 └── ui/                     # Pixel font & UI kit, HUDs, menus, settings, inventory, touch, fullscreen, UI scaling
-tests/                      # In-browser suites (collision, islands, world guard, water, quality, rpg, npc, ux)
+tests/                      # In-browser suites (collision, islands, world guard, water, quality, rpg, npc, ux, world, soak)
+scripts/audit-world.mjs     # World audit in Node (npm test)
 vendor/three/               # Pinned three.js r186 core + used addons
 audio/                      # Sound effects + CREDITS.md
 scripts/brand.mjs           # One 32 × 32 pixel logo → every icon, wordmark and social card
@@ -341,10 +372,18 @@ __pandaria.runWaterTests()               //  5  buoyancy, swimming, underwater v
 __pandaria.runQualityTests()             //  3  avatar & placement regressions
 __pandaria.runRpgTests()                 // 13  health, inventory, drops, building, torches, melee, mount, saves
 __pandaria.runNpcTests()                 //  4  140 residents × 90 s: 0 in walls, 0 in water, 0 off-grid
-await __pandaria.runUxTests()            // 13  light blocked by walls, incremental = full relight, shadow texel snap,
-                                         //     quality tiers, auto governor, crouch at ledges, toggle sprint,
-                                         //     analog stick, settings never strand the pointer, restore defaults
+await __pandaria.runUxTests()            // 14  light blocked by walls, incremental = full relight, shadow texel snap,
+                                         //     quality tiers, auto governor down and back up, crouch at ledges,
+                                         //     toggle sprint, analog stick, settings never strand the pointer,
+                                         //     restore defaults
+await __pandaria.runWorldTests()         // 14  water spreads, dams break, streams dry up, sand falls, craters,
+                                         //     burning, terrain-damage off, blade skills, learning, modes
+await __pandaria.runSoakTests()          //  8  seeded random player × 4,200 frames, invariants checked every frame:
+                                         //     finite state, never inside a block, mount never in water,
+                                         //     pause freezes everything, HP in range, NPCs out of walls, no errors
 ```
+
+The world itself is checked in Node, without a browser: `npm test` (or `npm run audit`) generates the world and checks seven rules — structure overlaps, plants inside structures, solid clouds in the city, coplanar transparent faces, floating structures, the wall enclosing the city, and every resident station being reachable.
 
 Add `?quality=low|medium|high|ultra`, `?touch=1` or `?nosw` to the URL to force a graphics setting, force touch mode or bypass the service worker while testing.
 
@@ -366,7 +405,7 @@ The production build is a static deployment on Vercel, served at **[jadeveil.xia
 
 - More of the realm: new regions and cities beyond the Jade City, travelled by dragon
 - Crafting: a 2 × 2 grid in the pack, a crafting table and a recipe book
-- Mobs, AI and loot; a GW2-style weapon skill bar
+- Mobs, AI and loot; more weapons, each with its own learnable skills
 - Quests and dialogue with residents; merchants and an economy
 - Equipment and armor slots
 

@@ -82,9 +82,18 @@ export class Interaction {
     dom.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
+  /**
+   * 交互射线的起点：第一人称就是相机；第三人称 / 环绕时相机在身后几格，
+   * 射线必须从角色的眼睛出发（方向仍沿准星）—— 否则方块和目标都够不着（旧版的 bug）。
+   */
+  _origin(out = new THREE.Vector3()) {
+    if (this.player.mode === "first" || this.player.mode === "debug") return out.copy(this.camera.position);
+    return out.copy(this.player.eyePosition);
+  }
+
   /** 体素 DDA 步进，返回 {x,y,z,nx,ny,nz,id} 或 null。 */
   raycast() {
-    const origin = this.camera.position.clone();
+    const origin = this._origin();
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
     dir.normalize();
@@ -188,7 +197,7 @@ export class Interaction {
     this.avatar?.swing();
     const wpn = this._weapon() || FIST;
     if (this.combat) {
-      const origin = this.camera.position.clone();
+      const origin = this._origin();
       const dir = new THREE.Vector3();
       this.camera.getWorldDirection(dir);
       const target = this.combat.raycast(origin, dir, wpn.reach);
@@ -221,7 +230,7 @@ export class Interaction {
   breakBlock() {
     const hit = this.hit || this.raycast();
     if (!hit) return false;
-    if (hit.id === ID.water) return false;
+    if (isLiquid(hit.id)) return false;
     // 基岩不可破坏 —— 世界底的最后一道防线
     if (isUnbreakable(hit.id)) {
       if (this.onBlocked) this.onBlocked("BEDROCK — CANNOT BREAK");

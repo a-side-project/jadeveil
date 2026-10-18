@@ -5,6 +5,8 @@
  *   · 每粒子独立的速度 / 阻尼 / 重力 / 寿命 / 尺寸变化 / 颜色渐变
  *   · 加色混合、不写深度；挂在选择性泛光层 —— 龙息、火球自带辉光
  *   · 片元里做硬边方块 + 一圈暗边，保持像素风
+ *   · solid 模式（碎石、木屑这类不发光的碎块）：普通混合、写深度、不进泛光 ——
+ *     加色混合的碎石会像火星一样发亮，在亮天空前面还会直接消失
  */
 import * as THREE from "three";
 import { BLOOM_SCENE } from "../core/renderer.js";
@@ -28,8 +30,18 @@ const VERT = /* glsl */ `
 const FRAG = /* glsl */ `
   varying float vAlpha;
   varying vec3 vColor;
+  uniform float uSolid;
+  uniform float uLight;
   void main() {
     if (vAlpha <= 0.002) discard;
+    if (uSolid > 0.5) {
+      // 碎块：不透明方块，受昼夜明暗影响（夜里不会亮得像发光体）
+      if (vAlpha < 0.5) discard;
+      vec2 q = abs(gl_PointCoord - 0.5);
+      float e = step(0.36, max(q.x, q.y));
+      gl_FragColor = vec4(vColor * uLight * (1.0 - e * 0.35), 1.0);
+      return;
+    }
     // 硬边方块粒子：中心亮、外圈 1/4 稍暗，像 MC 的 2×2 像素粒子
     vec2 p = abs(gl_PointCoord - 0.5);
     float edge = step(0.36, max(p.x, p.y));
@@ -39,7 +51,8 @@ const FRAG = /* glsl */ `
 `;
 
 export class FXParticles {
-  constructor(scene, capacity = 6000) {
+  constructor(scene, capacity = 6000, opts = {}) {
+    this.solid = !!opts.solid;
     this.cap = capacity;
     this.pos = new Float32Array(capacity * 3);
     this.vel = new Float32Array(capacity * 3);
@@ -67,22 +80,23 @@ export class FXParticles {
     this.mat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
-      uniforms: { uScale: { value: 420 } },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      toneMapped: false,
+      uniforms: { uScale: { value: 420 }, uSolid: { value: this.solid ? 1 : 0 }, uLight: { value: 1 } },
+      transparent: !this.solid,
+      depthWrite: this.solid,
+      blending: this.solid ? THREE.NormalBlending : THREE.AdditiveBlending,
+      toneMapped: !this.solid ? false : true,
     });
     this.points = new THREE.Points(g, this.mat);
     this.points.frustumCulled = false;
     this.points.renderOrder = 6;
-    this.points.layers.enable(BLOOM_SCENE);
+    if (!this.solid) this.points.layers.enable(BLOOM_SCENE);
     scene.add(this.points);
   }
 
   /** 视口高度变化时同步点尺寸（保证粒子的像素大小与分辨率无关）。 */
+  /** @param {number} h 绘制缓冲区高度（CSS 高度 × 渲染分辨率）。系数按 2 倍分辨率下的观感标定。 */
   setViewportHeight(h) {
-    this.mat.uniforms.uScale.value = h * 0.5;
+    this.mat.uniforms.uScale.value = h * 0.25;
   }
 
   /**

@@ -1,14 +1,15 @@
 {
   "name": "jadeveil",
   "version": "1.0.0",
-  "description": "JADEVEIL - A Voxel Realm of Mist and Jade. Procedural pixel-art voxel sandbox in three.js.",
+  "description": "JADEVEIL - a voxel fantasy realm in the Minecraft render style, built on three.js. Its first city, the Jade City, is open.",
   "main": "index.js",
   "scripts": {
     "serve": "node serve.mjs 8123",
     "vendor": "node scripts/vendor-three.mjs",
     "deploy": "wrangler deploy",
     "deploy:dry-run": "wrangler deploy --dry-run --outdir=.wrangler-dry-run",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "audit": "node scripts/audit-world.mjs",
+    "test": "node scripts/audit-world.mjs"
   },
   "keywords": [],
   "author": "",

@@ -10,6 +10,7 @@
  *   2 ENDER FIREBALL 末影火球：命中方块或目标时爆炸，范围伤害 + 残云
  *   3 VOID DASH      虚空冲刺：沿视线方向爆发加速，拖出紫色尾迹
  *   4 DRAGON ROAR    龙吼：冲击波环，范围伤害与击退，镜头震动
+ * 地形破坏（game/destruction.js，由 main.js 注入 this.destruction）：火球炸坑，龙息烧掉花草树叶。
  * 能量 100，持续回复；吐息按秒消耗，其余按次消耗并有冷却。
  */
 import * as THREE from "three";
@@ -25,6 +26,8 @@ const MOUNT_EYE = 3.1; // 骑手眼高（相对碰撞体底面）
 const ROOT_Y = 1.6; // 模型原点相对碰撞体底面的高度
 const MOUNT_FLY = { accel: 34, max: 22, maxFast: 40 };
 const THIRD_DIST = 14.5;
+// 末影龙的地形规则：水面当作地面（可以贴水掠过，不会潜水）
+const TERRAIN = { liquid: "floor" };
 
 // ---- 能量与技能 ----
 export const ENERGY_MAX = 100;
@@ -98,6 +101,9 @@ export class DragonMount {
 
   get skills() { return DRAGON_SKILLS; }
 
+  /** 移动规则（见 Player._blocks）：龙不入水，水面托住它。 */
+  get terrainRules() { return TERRAIN; }
+
   /* ================= 召唤 / 离场 ================= */
 
   toggle() {
@@ -111,10 +117,13 @@ export class DragonMount {
     const prev = { hw: p.hw, bh: p.bh };
     p.hw = MOUNT_HW;
     p.bh = MOUNT_H;
+    // 水里召唤：龙的碰撞体把水当地面，往上抬到水面以上（最多 8 格）
+    p.mount = { terrainRules: TERRAIN };
     let lift = -1;
-    for (let dy = 0; dy <= 3; dy++) {
+    for (let dy = 0; dy <= 8; dy++) {
       if (!p.collides(p.position.x, p.position.y + dy, p.position.z)) { lift = dy; break; }
     }
+    p.mount = null;
     if (lift < 0) {
       p.hw = prev.hw;
       p.bh = prev.bh;
@@ -227,8 +236,10 @@ export class DragonMount {
     this.audio?.fireball();
   }
 
-  _explode(pos) {
+  _explode(pos, hitBlock) {
     const fx = this.fx;
+    // 撞上方块才炸地形（打中目标 / 飞到射程尽头在空中爆开时不炸）
+    if (hitBlock) this.destruction?.explode(pos, 2.6);
     fx.burst(pos.x, pos.y, pos.z, 220, { speed: 11, life: 1.2, size: 0.55, size1: 0.08, color: C_HOT, color1: C_DEEP, drag: 2.2 });
     fx.burst(pos.x, pos.y, pos.z, 70, { speed: 3, life: 2.2, size: 1.3, size1: 0.3, color: C_MID, color1: C_DEEP, drag: 1, lift: 1.2 });
     fx.ring(pos.x, pos.y + 0.3, pos.z, 80, { speed: 15, life: 0.8, size: 0.5, size1: 0.12, color: C_HOT, color1: C_DEEP, drag: 2.6 });
@@ -248,6 +259,9 @@ export class DragonMount {
   _dash() {
     const dir = this._aimDir(new THREE.Vector3());
     this.player.velocity.addScaledVector(dir, 38);
+    // 冲刺期间放宽飞行限速：否则下一帧就被限速钳回巡航速度，冲刺形同虚设
+    this.player.boostT = 0.45;
+    this.player.boostMax = 62;
     this._dashT = 0.45;
     this.audio?.dash();
   }
@@ -422,7 +436,10 @@ export class DragonMount {
     if (this._zoneTick <= 0) {
       this._zoneTick = 0.5;
       const hit = this._rayBlock(mouth, dir, BREATH.len + 2);
-      if (hit) this.combat.addZone(hit, 2.4, 6, 3, "dragon");
+      if (hit) {
+        this.combat.addZone(hit, 2.4, 6, 3, "dragon");
+        this.destruction?.burn(hit, 1.8);
+      }
     }
   }
 
@@ -435,7 +452,7 @@ export class DragonMount {
       for (let k = 0; k < steps && !boom; k++) {
         pr.pos.addScaledVector(pr.vel, dt / steps);
         pr.dist += (pr.vel.length() * dt) / steps;
-        if (isSolid(this.world.get(Math.floor(pr.pos.x), Math.floor(pr.pos.y), Math.floor(pr.pos.z)))) boom = true;
+        if (isSolid(this.world.get(Math.floor(pr.pos.x), Math.floor(pr.pos.y), Math.floor(pr.pos.z)))) { boom = true; pr.hitBlock = true; }
         else if (this.combat.inSphere(pr.pos, 0.8).length) boom = true;
         else if (pr.dist > FIREBALL.range) boom = true;
       }
@@ -451,7 +468,7 @@ export class DragonMount {
         });
       }
       if (boom) {
-        this._explode(pr.pos);
+        this._explode(pr.pos, pr.hitBlock);
         this.scene.remove(pr.mesh);
         this.projectiles.splice(i, 1);
       }

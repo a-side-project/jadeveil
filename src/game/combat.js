@@ -57,7 +57,7 @@ export class Combat {
     const cos = Math.cos(angle);
     for (const e of this.entities) {
       if (!e.alive) continue;
-      const c = this.center(e, new THREE.Vector3());
+      const c = this.center(e, this._coneTmp || (this._coneTmp = new THREE.Vector3()));
       const to = c.sub(origin);
       const d = to.length();
       if (d > len + e.radius || d < 1e-4) continue;

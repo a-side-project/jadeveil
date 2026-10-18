@@ -41,13 +41,62 @@ async function idb(mode, fn) {
   }
 }
 
-/** 旧版本存档升级到当前版本。目前只有 v1。 */
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+const isInt = (v) => Number.isInteger(v);
+const isStr = (v) => typeof v === "string" && v.length > 0 && v.length < 80;
+
+/**
+ * 存档结构校验 —— 读档 / 导入的唯一入口，在任何系统读取之前执行。
+ *
+ *   · 结构性错误（缺字段、类型不对、坐标不是数字）：整个存档拒绝，世界一个字节都不改
+ *     （旧版逐个系统 load，前面的世界差量已经重放了，后面的背包才抛错 —— 留下半读的世界）
+ *   · 条目级错误（某一格物品、某个掉落物坏了）：只丢弃那一条，其余照常读
+ * 返回一份干净的副本。
+ */
+export function validateSave(d) {
+  const bad = (what) => { throw new Error(`SAVE IS DAMAGED (${what})`); };
+  const p = d.player;
+  if (!p || !Array.isArray(p.pos) || p.pos.length !== 3 || !p.pos.every(isNum)) bad("PLAYER POSITION");
+  const out = { ...d };
+  out.player = {
+    pos: p.pos.slice(),
+    yaw: isNum(p.yaw) ? p.yaw : 0,
+    pitch: isNum(p.pitch) ? Math.max(-1.55, Math.min(1.55, p.pitch)) : 0,
+    mode: ["first", "third", "orbit"].includes(p.mode) ? p.mode : "first",
+  };
+  const h = d.health || {};
+  out.health = { hp: isNum(h.hp) ? Math.max(0, Math.min(20, Math.round(h.hp))) : 20, air: isNum(h.air) ? Math.max(0, Math.min(10, h.air)) : 10 };
+  const inv = d.inventory;
+  if (inv && typeof inv === "object") {
+    if (!Array.isArray(inv.slots)) bad("INVENTORY");
+    out.inventory = {
+      selected: isInt(inv.selected) && inv.selected >= 0 && inv.selected < 9 ? inv.selected : 0,
+      slots: inv.slots.slice(0, 36).map((s) => (Array.isArray(s) && isStr(s[0]) && isInt(s[1]) && s[1] > 0 && s[1] <= 64 ? [s[0], s[1]] : null)),
+    };
+  }
+  const wd = d.world;
+  if (wd) {
+    if (!Array.isArray(wd.palette) || !Array.isArray(wd.list) || wd.list.length % 4 !== 0) bad("WORLD EDITS");
+    if (!wd.palette.every(isStr) || !wd.list.every(isInt)) bad("WORLD EDITS");
+    if (wd.list.some((v, i) => i % 4 === 3 && (v < 0 || v >= wd.palette.length))) bad("WORLD EDITS");
+    out.world = { palette: wd.palette.slice(), list: wd.list.slice() };
+  }
+  out.drops = Array.isArray(d.drops) ? d.drops.filter((e) => Array.isArray(e) && isStr(e[0]) && isInt(e[1]) && e[1] > 0 && isNum(e[2]) && isNum(e[3]) && isNum(e[4])) : [];
+  out.time = isNum(d.time) ? ((d.time % 1440) + 1440) % 1440 : 420;
+  out.playTime = isNum(d.playTime) && d.playTime >= 0 ? d.playTime : 0;
+  out.mode = d.mode === "build" ? "build" : "adventure";
+  const sk = d.skills;
+  out.skills = sk && Array.isArray(sk.learned) ? { learned: sk.learned.filter(isStr), practice: isInt(sk.practice) && sk.practice >= 0 ? sk.practice : 0 } : null;
+  return out;
+}
+
+/** 旧版本存档升级到当前版本（目前只有 v1），并做结构校验。 */
 function migrate(data) {
   if (!data || typeof data !== "object") throw new Error("NOT A SAVE FILE");
   if (data.game !== "jadeveil") throw new Error("NOT A JADEVEIL SAVE");
   if (!(data.version >= 1)) throw new Error("UNKNOWN SAVE VERSION");
   if (data.version > SAVE_VERSION) throw new Error("SAVE IS FROM A NEWER VERSION");
-  return data;
+  return validateSave(data);
 }
 
 export class SaveManager {
@@ -84,8 +133,11 @@ export class SaveManager {
   }
 
   async save() {
-    if (this._saving) return false;
+    // 正在存：等它存完再存一次最新状态（旧版直接返回 false —— 紧接着导出会拿到旧存档）
+    if (this._saving) return this._savePromise.then(() => this.save());
     this._saving = true;
+    let done;
+    this._savePromise = new Promise((r) => (done = r));
     try {
       const data = {
         game: "jadeveil",
@@ -102,6 +154,7 @@ export class SaveManager {
       return false;
     } finally {
       this._saving = false;
+      done();
     }
   }
 
@@ -149,6 +202,7 @@ export class SaveManager {
       input.onchange = async () => {
         const file = input.files && input.files[0];
         if (!file) return resolve(false);
+        const wasEnabled = this.enabled;
         try {
           const data = migrate(JSON.parse(await file.text()));
           this.enabled = false; // 防止重载前的自动存档把刚导入的存档覆盖掉
@@ -157,6 +211,7 @@ export class SaveManager {
           location.reload();
           resolve(true);
         } catch (err) {
+          this.enabled = wasEnabled; // 导入失败：恢复自动存档（旧版会一直关着，直到刷新页面）
           reject(err);
         }
       };

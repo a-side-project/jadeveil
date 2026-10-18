@@ -11,6 +11,7 @@
  */
 import * as THREE from "three";
 import { AIR, BLOCKS, FACE_LIGHT, isOpaque, isLiquid } from "./blocks.js";
+
 import { CH, CW, VoxelWorld } from "./voxelWorld.js";
 import { hash3i } from "../core/noise.js";
 import { TILE_VARIANTS } from "./atlas.js";
@@ -139,6 +140,36 @@ export class ChunkMesher {
     return r;
   }
 
+  /**
+   * 液体格的水面高度（0..1）：水源满格；流动水按等级变浅 (8 - L) / 8；上面还有水（瀑布）就是满格。
+   * 不是液体返回 -1。
+   */
+  _liquidH(x, y, z) {
+    const b = BLOCKS[this._id(x, y, z)];
+    if (!b || !b.liquid) return -1;
+    if (b.flow === 0) return 1;
+    const up = BLOCKS[this._id(x, y + 1, z)];
+    if (up && up.liquid) return 1;
+    return (8 - b.flow) / 8;
+  }
+
+  /**
+   * 液面角点高度：取共享这个角的四格液体的平均高度（MC 的做法）——
+   * 水面从水源到流动末端是连续的斜面，而不是一级级的台阶。任何一格上方有水 → 满格。
+   * (wx, wz) 是角点的世界坐标（整数格线）。
+   */
+  _cornerH(wx, y, wz) {
+    let sum = 0, n = 0;
+    for (const [dx, dz] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
+      const h = this._liquidH(wx + dx, y, wz + dz);
+      if (h < 0) continue;
+      if (h >= 1) return 1;
+      sum += h;
+      n++;
+    }
+    return n ? sum / n : 1;
+  }
+
   /** 局部缓存里的方块 id（坐标为世界坐标，必须在本区块 ±1 格内）。 */
   _id(x, y, z) {
     if (y < 0 || y >= CH) return AIR;
@@ -226,11 +257,26 @@ export class ChunkMesher {
     const nz = z + d[2];
     const other = this._id(nx, ny, nz);
     if (other === AIR) return true;
+    // 流动水比满格矮：头顶贴着的不透明方块挡不住它的水面（否则从侧面看水面上有个洞）
+    if (d[1] === 1 && isLiquid(selfId) && this._liquidH(x, y, z) < 1) return true;
     if (isOpaque(other)) return false;
-    // 同种液体之间不生成面
-    if (isLiquid(selfId) && isLiquid(other)) return false;
-    // 非不透明方块（水/植物/灯笼）相邻时，只有类型不同才生成
-    return other !== selfId;
+    const selfLiquid = isLiquid(selfId), otherLiquid = isLiquid(other);
+    // 液体之间：只有侧面、且邻格水面更低时才生成（流动水的台阶）；上下之间不生成
+    if (selfLiquid && otherLiquid) {
+      if (d[1] !== 0) return false;
+      return this._liquidH(nx, ny, nz) < this._liquidH(x, y, z) - 1e-3;
+    }
+    if (other === selfId) return false;
+    // 两个不同的半透明方块贴在一起：只让一方生成这个面。
+    // 旧版两边各生成一个、都是双面渲染，于是同一平面上有两个面互相 z-fighting（闪烁）——
+    // 灯笼与流苏、云与竹叶、荷叶与水面都是这样。
+    //   贴着水：由水面来画（水的面带折射与反射，半透明方块那一面跳过）
+    //   都不是水：由 id 大的一方来画；对方在这一侧根本不画面时（例如火把），自己照常画
+    if (otherLiquid) return false;
+    if (selfLiquid) return true;
+    const ob = BLOCKS[other];
+    if (!ob || !ob.faces[faceIdx ^ 1]) return true;
+    return selfId > other;
   }
 
   /**
@@ -257,11 +303,9 @@ export class ChunkMesher {
           const def = BLOCKS[id];
           if (!def) continue;
 
-          const bucket = def.liquid
-            ? buckets.water
-            : def.opaque
-              ? buckets.opaque
-              : buckets.cutout;
+          // 云走镂空材质：贴图白、不透明 —— 远看是一整片云海。
+          // （试过单独的半透明云材质：透过去看得见海面，远处碎成一块块，「云上之城」的纵深感没了）
+          const bucket = def.liquid ? buckets.water : def.opaque ? buckets.opaque : buckets.cutout;
 
           for (let f = 0; f < 6; f++) {
             if (!this.faceVisible(ox + x, y, oz + z, f, id)) continue;
@@ -274,10 +318,24 @@ export class ChunkMesher {
             const shade = FACE_LIGHT[f];
             const emi = def.emissive || 0;
             for (let k = 0; k < 4; k++) this.corner(ox + x, y, oz + z, f, k, cs[k]);
+            // 流动水：顶点高度按角点水面高度下压；侧面若贴着更低的水，底边抬到那格水面
+            const liquidFlow = def.liquid && def.flow > 0;
+            let sideBottom = 0;
+            if (def.liquid && face.dir[1] === 0) {
+              const nh = this._liquidH(ox + x + face.dir[0], y, oz + z + face.dir[2]);
+              if (nh > 0) sideBottom = nh;
+            }
 
             for (let k = 0; k < 4; k++) {
               const c = face.corners[k];
-              bucket.pos.push(ox + x + c[0], y + c[1], oz + z + c[2]);
+              let cy = c[1];
+              if (def.liquid) {
+                if (cy === 1 && (liquidFlow || face.dir[1] === 1)) cy = liquidFlow ? this._cornerH(ox + x + c[0], y, oz + z + c[2]) : 1;
+                else if (cy === 0 && sideBottom > 0) cy = sideBottom;
+                // 侧面的上沿不能低于下沿（角点高度是平均值，可能低于邻格水面）：压成一条线，不会翻面
+                if (c[1] === 1 && sideBottom > 0) cy = Math.max(cy, sideBottom);
+              }
+              bucket.pos.push(ox + x + c[0], y + cy, oz + z + c[2]);
               bucket.norm.push(face.dir[0], face.dir[1], face.dir[2]);
 
               // UV：角点顺序 0=左下 1=右下 2=右上 3=左上

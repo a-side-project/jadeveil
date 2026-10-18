@@ -187,8 +187,10 @@ const SMOKE_VERT = /* glsl */ `
     pos.z += cos(uTime * 0.42 + aPhase * 7.0) * (0.4 + t * 1.6);
     vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = aSize * (1.0 + t * 3.2) * 260.0 / max(-mv.z, 1.0);
-    vAlpha = (1.0 - t) * 0.30 * smoothstep(0.0, 0.15, t);
+    float d = max(-mv.z, 0.1);
+    // 尺寸上限 + 贴近镜头淡出：站在灯笼下时烟团不会变成满屏的亮斑，也不会撞到显卡的点尺寸上限而突变
+    gl_PointSize = min(aSize * (1.0 + t * 3.2) * 260.0 / d, 160.0);
+    vAlpha = (1.0 - t) * 0.30 * smoothstep(0.0, 0.15, t) * smoothstep(1.5, 4.0, d);
   }
 `;
 
@@ -372,30 +374,57 @@ export class MistLayers {
     const tex = this._makeMistTexture();
 
     for (let i = 0; i < heights.length; i++) {
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex,
+      // 自定义着色器：
+      //   · 贴图按世界坐标采样（不随玩家滑动），只用时间做缓慢漂移
+      //   · 离镜头 22 格以内完全透明 —— 雾带是远景的纵深提示，不能横穿室内、贴着脸
+      //   · 高度放在半格上（38.5…），绝不和方块的水平面共面（旧版放在整数高度，与屋顶 / 天花板 z-fighting 闪烁）
+      const uniforms = {
+        map: { value: tex },
+        uColor: { value: new THREE.Color(0xdfe9f2) },
+        uOpacity: { value: 0 },
+        uDrift: { value: new THREE.Vector2() },
+      };
+      const mat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: /* glsl */ `
+          varying vec3 vW;
+          void main() {
+            vec4 w = modelMatrix * vec4(position, 1.0);
+            vW = w.xyz;
+            gl_Position = projectionMatrix * viewMatrix * w;
+          }`,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D map;
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          uniform vec2 uDrift;
+          varying vec3 vW;
+          void main() {
+            float a = texture2D(map, vW.xz / 130.0 + uDrift).a;
+            float d = distance(vW, cameraPosition);
+            a *= uOpacity * smoothstep(22.0, 70.0, d);
+            if (a < 0.002) discard;
+            gl_FragColor = vec4(uColor, a);
+            #include <colorspace_fragment>
+          }`,
         transparent: true,
         depthWrite: false,
         side: THREE.DoubleSide,
-        // 极淡：多层叠加不能把画面洗白，只做微弱的纵深提示
-        opacity: 0.062 - i * 0.012,
-        color: new THREE.Color(0xdfe9f2),
-        fog: false,
-        blending: THREE.NormalBlending,
       });
       const geo = new THREE.PlaneGeometry(1, 1);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.scale.set(520, 520, 1);
-      mesh.position.y = heights[i];
+      const y = Math.floor(heights[i]) + 0.5;
+      mesh.position.y = y;
       mesh.renderOrder = -500 + i;
       mesh.frustumCulled = false;
       scene.add(mesh);
-      this.layers.push({ mesh, mat, speed: 0.6 + i * 0.35, y: heights[i], baseOpacity: 0.062 - i * 0.012 });
+      this.layers.push({ mesh, mat, uniforms, speed: 0.6 + i * 0.35, y, baseOpacity: 0.062 - i * 0.012 });
     }
   }
 
-  /** 生成柔和的云雾贴图（逐像素，带 alpha）。 */
+  /** 生成柔和、四方连续（可平铺）的云雾贴图：周期性格点噪声，横竖都无缝。 */
   _makeMistTexture(size = 128) {
     const c = document.createElement("canvas");
     c.width = c.height = size;
@@ -407,26 +436,24 @@ export class MistLayers {
       return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
     };
     const fade = (t) => t * t * (3 - 2 * t);
-    const noise = (x, y) => {
+    // 周期为 period 个格点的值噪声：坐标对周期取模，贴图边缘与对边严丝合缝
+    const noise = (x, y, period) => {
       const xi = Math.floor(x), yi = Math.floor(y);
       const xf = x - xi, yf = y - yi;
       const u = fade(xf), v = fade(yf);
-      const a = hash(xi, yi), b = hash(xi + 1, yi);
-      const cc = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+      const m = (k) => ((k % period) + period) % period;
+      const a = hash(m(xi), m(yi)), b = hash(m(xi + 1), m(yi));
+      const cc = hash(m(xi), m(yi + 1)), d = hash(m(xi + 1), m(yi + 1));
       return (a + (b - a) * u) + ((cc + (d - cc) * u) - (a + (b - a) * u)) * v;
     };
     const fbm = (x, y) => {
-      let v = 0, amp = 0.5, f = 1;
-      for (let i = 0; i < 4; i++) { v += amp * noise(x * f, y * f); f *= 2.03; amp *= 0.5; }
+      let v = 0, amp = 0.5, p = 4;
+      for (let i = 0; i < 4; i++) { v += amp * noise((x / size) * p, (y / size) * p, p); p *= 2; amp *= 0.5; }
       return v;
     };
-    // 可平铺：用环形坐标采样
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        const ang = (x / size) * Math.PI * 2;
-        const rad = (y / size) * Math.PI * 2;
-        const nx = Math.cos(ang) * 6, ny = Math.sin(ang) * 6;
-        const n = fbm(nx + 10, ny + 10) * 0.6 + fbm(ny * 1.7 + 3, nx * 1.7 + 7) * 0.4;
+        const n = fbm(x, y);
         const a = Math.max(0, Math.min(255, (n - 0.42) * 620));
         const o = (y * size + x) * 4;
         img.data[o] = 240; img.data[o + 1] = 244; img.data[o + 2] = 250;
@@ -436,27 +463,25 @@ export class MistLayers {
     ctx.putImageData(img, 0, 0);
     const t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(2, 2);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
 
   update(elapsed, camera, nightFactor = 0) {
     for (const L of this.layers) {
-      // 水平跟随相机（保持覆盖），并缓慢漂移
-      const drift = (elapsed * L.speed) % 520;
-      L.mesh.position.x = camera.position.x + drift;
-      L.mesh.position.z = camera.position.z + drift * 0.35;
+      // 平面跟随相机（保持覆盖），贴图按世界坐标采样，只随时间漂移
+      L.mesh.position.x = camera.position.x;
+      L.mesh.position.z = camera.position.z;
+      L.uniforms.uDrift.value.set((elapsed * L.speed) / 130, (elapsed * L.speed * 0.35) / 130);
 
-      // 关键：相机高于雾层时淡出。
-      // 否则从高空俯瞰时，水平面会被掠射角拉伸成不透明的白墙。
+      // 相机高于雾层时淡出：否则从高空俯瞰时，水平面会被掠射角拉伸成不透明的白墙
       const above = camera.position.y - L.y;
       const fade = Math.max(0, Math.min(1, 1 - above / 44));
-      L.mat.opacity = L.baseOpacity * fade * (1 - nightFactor * 0.45);
+      L.uniforms.uOpacity.value = L.baseOpacity * fade * (1 - nightFactor * 0.45);
       L.mesh.visible = fade > 0.01;
 
       // 夜晚变暗
-      L.mat.color.setRGB(0.87 - nightFactor * 0.6, 0.91 - nightFactor * 0.6, 0.97 - nightFactor * 0.5);
+      L.uniforms.uColor.value.setRGB(0.87 - nightFactor * 0.6, 0.91 - nightFactor * 0.6, 0.97 - nightFactor * 0.5);
     }
   }
 }

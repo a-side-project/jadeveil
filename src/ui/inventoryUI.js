@@ -223,11 +223,17 @@ export class InventoryUI {
 
   close() {
     if (!this.open) return;
+    this.hide();
+    this.onClose?.();
+  }
+
+  /** 关闭但不触发 onClose（死亡等由外部接管状态的场合）。 */
+  hide() {
+    if (!this.open) return;
     this._stowCursor();
     this.open = false;
     this.el.classList.remove("open");
     this._tip(null);
-    this.onClose?.();
   }
 
   toggle() {

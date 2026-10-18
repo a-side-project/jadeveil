@@ -45,32 +45,42 @@ export const ISLAND_ACCESS_TEST_SOURCE = `
 
     // ---- 路径 A：从地面起飞，飞到岛顶上方，再降落 ----
     // 起点选在浮岛外侧地面（石阶起点附近）
-    const startX = x + r + 10;
-    const startZ = z;
+    // 像真实玩家一样：在岛外侧找一列头顶一路净空的位置起飞（云是可以踩的实心方块，正上方有云就换个地方）；
+    // 平飞的高度要高过航线上最高的障碍（岛上的树冠）
+    const anySolid = (cx, cz, y0, y1) => { for (let yy = y0; yy <= y1; yy++) for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) if (world.solidAt(cx + dx, yy, cz + dz)) return true; return false; };
+    let startX = x + r + 10, startZ = z;
+    for (let k = 0; k < 24; k++) {
+      const sx = x + r + 10 + (k % 6), sz = z + ((k / 6) | 0) * 3 - 4;
+      const g = topSolidAt(sx, sz);
+      if (g >= 0 && !anySolid(sx, sz, g + 1, topY + 12)) { startX = sx; startZ = sz; break; }
+    }
+    let cruise = topY + 4;
+    for (let cx = x; cx <= startX; cx++) for (let yy = topY; yy < topY + 30; yy++) if (anySolid(cx, startZ, yy, yy)) cruise = Math.max(cruise, yy + 3);
     const groundY = topSolidAt(startX, startZ);
     reset(startX + 0.5, (groundY < 0 ? 40 : groundY + 2), startZ + 0.5);
     player.yaw = Math.PI / 2;
     player.targetYaw = Math.PI / 2;
 
-    // 1) 飞行上升到岛顶以上
+    // 1) 飞行上升到航线高度
     player.keys.add("Space");
     let rose = false;
     for (let i = 0; i < 1500; i++) {
       player.update(1 / 60);
-      if (player.position.y > topY + 4) { rose = true; break; }
+      if (player.position.y > cruise) { rose = true; break; }
     }
     player.keys.delete("Space");
     const afterRise = { y: +player.position.y.toFixed(2), rose };
 
-    // 2) 横移到岛心上方（保持高度，不继续爬升）
+    // 2) 横移到岛心上方（保持高度，不继续爬升）；同时把横向偏差修正回岛心这一行
     player.keys.add("KeyW");
     let moved = false;
     for (let i = 0; i < 900; i++) {
       // 保持水平飞行：每帧把垂直速度归零，避免一边前进一边爬升
       player.velocity.y = 0;
       player.position.y = afterRise.y;
+      player.velocity.z = (z + 0.5 - player.position.z) * 4;
       player.update(1 / 60);
-      if (Math.abs(player.position.x - (x + 0.5)) < 1.2) { moved = true; break; }
+      if (Math.abs(player.position.x - (x + 0.5)) < 1.2 && Math.abs(player.position.z - (z + 0.5)) < 1.2) { moved = true; break; }
     }
     player.keys.delete("KeyW");
     const afterMove = { x: +player.position.x.toFixed(2), y: +player.position.y.toFixed(2), moved };

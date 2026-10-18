@@ -143,6 +143,29 @@ export const UX_TEST_SOURCE = `
     return { slowTier: slow.autoTier, throttledTier: throttled.autoTier, pass: slow.autoTier === "high" && throttled.autoTier === "ultra" };
   });
 
+  // 7b. 降档后能升回来：临时卡顿过去以后，20 秒都稳定 60 FPS 就升一档；不会超过检测出的档位；升上去又撑不住，下次多等一倍
+  await run("AUTO quality recovers after a transient slowdown, capped at the detected tier", () => {
+    const Gov = P.governor.constructor;
+    const s = { mode: "auto", autoTier: "low", detected: { tier: "high" }, save() {} };
+    const g = new Gov(s, () => {}); g.focused = () => true; g.settle = 0;
+    const run60 = (sec) => { for (let i = 0; i < sec * 60; i++) g.update(1 / 60, true); };
+    run60(19);
+    const before = s.autoTier;            // 不到 20 秒：不升
+    run60(5);
+    const one = s.autoTier;               // low → medium
+    g.settle = 0; run60(26);
+    const two = s.autoTier;               // medium → high（= 检测档位）
+    g.settle = 0; run60(30);
+    const capped = s.autoTier;            // 不超过 high
+    // 升上去又撑不住 → 降回来，下次要 40 秒
+    s.autoTier = "medium"; g._justUpgraded = false; g.upgradeWindows = 5; g.fastWindows = 0; g.settle = 0;
+    run60(24); const up = s.autoTier;     // → high
+    g.settle = 0; for (let i = 0; i < 300; i++) g.update(1 / 30, true);
+    const down = s.autoTier, waits = g.upgradeWindows;
+    const pass = before === "low" && one === "medium" && two === "high" && capped === "high" && up === "high" && down === "medium" && waits === 10;
+    return { before, one, two, capped, up, down, waits, pass };
+  });
+
   // 8. 蹲下：按住 C 走到平台边缘不会掉下去；视线降低；碰撞箱变矮
   await run("Crouch: holding C at a ledge edge does not fall off", () => {
     if (!site) return { pass: false, reason: "no site" };
@@ -198,10 +221,13 @@ export const UX_TEST_SOURCE = `
     player.velocity.set(0, 0, 0); player.onGround = true;
     player.yaw = player.targetYaw = -Math.PI / 2;
     player.keys.clear();
-    const prevMode = player.sprintMode, prevLocked = player.touchEngaged;
+    const prevMode = player.sprintMode, prevLocked = player.touchEngaged, prevState = P.state.mode;
     player.sprintMode = "toggle"; player.touchEngaged = true;
+    // 真实按键走输入路由：路由只在「游戏中」响应
+    P.state.mode = "play";
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "ShiftLeft" }));
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "ShiftLeft" }));
+    P.state.mode = prevState;
     player.keys.add("KeyW");
     step(20);
     const sprinting = player.sprinting;

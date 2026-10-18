@@ -139,7 +139,8 @@ export class PlayerHealth {
   load(d) {
     if (!d) return;
     this.hp = Math.max(1, Math.min(MAX_HP, d.hp | 0 || MAX_HP));
-    this.air = Math.max(0, Math.min(MAX_AIR, +d.air || MAX_AIR));
+    // 存档里的 0 是合法值（正在憋气）：旧版 `+d.air || MAX_AIR` 把它当成缺失，读档后氧气直接回满
+    this.air = Number.isFinite(d.air) ? Math.max(0, Math.min(MAX_AIR, d.air)) : MAX_AIR;
     this.dead = false;
   }
 }

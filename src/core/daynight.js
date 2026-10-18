@@ -139,13 +139,14 @@ export class DayNight {
     } else {
       st.lightDir.copy(st.moonDir);
       st.lightColor.copy(MOON_TINT);
-      st.lightIntensity = 0.42 * st.moonLight;
+      // 太阳落到 -0.02 时强度已经是 0；月光从这里开始在 -0.02 → -0.12 之间淡入，交接处连续、没有跳变
+      st.lightIntensity = 0.42 * st.moonLight * smooth(-0.02, -0.12, elev);
     }
     st.sunIntensity = st.lightIntensity;
 
     // ---- 天空派生色：雾（地平线一圈的平均天空色）、半球光天空色（天顶）、云的受光 ----
     // 只在时间变化超过 0.25 分钟时重算（每次约 0.1ms）
-    if (Math.abs(t - this._lastColorT) > 0.25 || this._lastPhase !== phase) {
+    if (Math.abs(t - this._lastColorT) > 0.25 || Math.abs(this._lastPhase - phase) > 0.002 || this._lastPhase === undefined) {
       this._lastColorT = t;
       this._lastPhase = phase;
       this._skyDerived(st);

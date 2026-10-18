@@ -163,8 +163,9 @@ const GodRayShader = {
       acc /= max(norm, 1e-4);
 
       // 太阳在屏幕外或夜晚则减弱
-      float onScreen = step(0.0, uSunScreen.x) * step(uSunScreen.x, 1.0)
-                     * step(0.0, uSunScreen.y) * step(uSunScreen.y, 1.0);
+      // 太阳接近屏幕边缘时平滑淡出（旧版用 step 硬切：转头时光束在屏幕边缘一开一关）
+      float onScreen = smoothstep(-0.15, 0.08, uSunScreen.x) * smoothstep(1.15, 0.92, uSunScreen.x)
+                     * smoothstep(-0.15, 0.08, uSunScreen.y) * smoothstep(1.15, 0.92, uSunScreen.y);
       float amt = uStrength * onScreen * (1.0 - uNight * 0.92);
       // 水下：丁达尔光束更密集、更明显
       amt *= 1.0 + uUnderwater * 1.15;
@@ -242,8 +243,10 @@ export class Renderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.shadowMap.autoUpdate = true;
+    // r186 已移除 PCFSoftShadowMap（会警告并回退）；显式用 PCF，柔化由 shadow.radius 控制
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false; // render() 每帧手动标记一次
+
     this.renderer.info.autoReset = true;
 
     this.scene = new THREE.Scene();
@@ -392,13 +395,15 @@ export class Renderer {
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.grade);
 
-    // FXAA 抗锯齿（composer 渲染到 render target 时 MSAA 失效，这里补上）
+    // 色调映射 + sRGB 输出
+    this.output = new OutputPass();
+    this.composer.addPass(this.output);
+
+    // FXAA 抗锯齿放在最后（composer 渲染到 render target 时 MSAA 失效，这里补上）：
+    // 必须作用在色调映射之后的 LDR 画面上 —— 旧版在 HDR 线性值上找边缘，灯笼、高光边缘处理很差、会闪
     this.fxaa = new ShaderPass(FXAAShader);
     this.fxaa.uniforms.uResolution.value.set(1 / (window.innerWidth * pr), 1 / (window.innerHeight * pr));
     this.composer.addPass(this.fxaa);
-
-    this.output = new OutputPass();
-    this.composer.addPass(this.output);
   }
 
   /* ---------------- 体素材质 ---------------- */
@@ -537,19 +542,6 @@ export class Renderer {
     this.matWater = createWaterMaterial();
     this.waterUniforms = this.matWater.uniforms;
 
-    // 云雾
-    this.matCloud = new THREE.MeshStandardMaterial({
-      map: null,
-      vertexColors: true,
-      roughness: 1,
-      metalness: 0,
-      transparent: true,
-      opacity: 0.62,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      emissive: 0xdfe9f2,
-      emissiveIntensity: 0.28,
-    });
 
     /* ---------------- 选择性泛光（移植官方示例） ----------------
      * 官方 webgl_postprocessing_unreal_bloom_selective 的核心：
@@ -565,7 +557,8 @@ export class Renderer {
     this.bloomLayer.set(BLOOM_SCENE);
 
     // 非泛光 mesh → 纯黑（官方做法）
-    this._darkMaterial = new THREE.MeshBasicMaterial({ color: "black" });
+    // fog: false —— 带雾的话远处的「黑」会被染成雾色，白天的雾霾和水面也会泛光
+    this._darkMaterial = new THREE.MeshBasicMaterial({ color: "black", fog: false });
 
     // 体素网格 → 只输出自发光（aEmissive > 0 的面才亮）。
     // 泛光的颜色必须来自发光体自己的贴图：旧版输出纯白（vec3(vEmissive * 3.0)），
@@ -591,6 +584,8 @@ export class Renderer {
           if (t.a < 0.5) discard; // 镂空灯笼的透明像素不发光
           gl_FragColor = vec4(t.rgb * vEmissive * uGlow, 1.0);
         }`,
+      // 与镂空材质一致：双面（灯笼背面也要进泛光）
+      side: THREE.DoubleSide,
     });
 
     this._savedMaterial = {};
@@ -606,7 +601,9 @@ export class Renderer {
       }
       if (this.bloomLayer.test(obj.layers)) return; // 发光体保留原样
       // 粒子/精灵/线：泛光通道里直接隐藏（它们不写深度，不需要用黑材质挡光）
-      if (obj.isPoints || obj.isSprite || obj.isLine) {
+      // 粒子 / 精灵 / 线 / 半透明体（雾带、水面、云）：泛光通道里直接隐藏。
+      // 半透明体若换成黑色不透明材质会写深度，把后面的灯笼整片挡掉（视线越过雾带高度时光晕忽有忽无）
+      if (obj.isPoints || obj.isSprite || obj.isLine || obj.material.transparent) {
         this._savedVisible[obj.uuid] = obj.visible;
         obj.visible = false;
         return;
@@ -694,7 +691,7 @@ export class Renderer {
     if (!this.godrayRT) return;
     const prevTarget = r.getRenderTarget();
     const prevAutoClear = r.autoClear;
-    const prevClear = new THREE.Color();
+    const prevClear = this._prevClear || (this._prevClear = new THREE.Color());
     r.getClearColor(prevClear);
     const prevClearAlpha = r.getClearAlpha();
     // 遮罩里看不见阴影，重算一遍阴影贴图等于白花一倍开销
@@ -716,7 +713,7 @@ export class Renderer {
   }
 
   setAtlas(texture) {
-    for (const m of [this.matOpaque, this.matCutout, this.matCloud]) {
+    for (const m of [this.matOpaque, this.matCutout]) {
       m.map = texture;
       m.needsUpdate = true;
     }
@@ -747,7 +744,9 @@ export class Renderer {
     this.fill.intensity = 0.10 + st.hemiIntensity * 0.16;
 
     // 夜间的冷色补光：月亮已经是主光源（带阴影），这里只留一点让背光面的轮廓可读
-    this.moon.intensity = st.night * 0.14;
+    // 补光跟着真实的月亮走；月亮在地平线以下时没有
+    this.moon.intensity = st.night * 0.14 * Math.max(0, Math.min(1, st.moonDir.y * 6));
+    this.moon.position.copy(st.moonDir).multiplyScalar(100);
     this.moon.color.setHex(0x8fb0ff);
 
     this.scene.fog.color.copy(st.fogColor);
@@ -830,7 +829,7 @@ export class Renderer {
     this.godrays.uniforms.uSunScreen.value.set(sx, sy);
     // 与着色器里的判定一致：太阳不在屏幕内（或在相机背后）、或夜里强度几乎为 0 时，体积光没有任何贡献
     const u = this.godrays.uniforms;
-    const onScreen = v.z < 1 && sx >= 0 && sx <= 1 && sy >= 0 && sy <= 1;
+    const onScreen = v.z < 1 && sx > -0.15 && sx < 1.15 && sy > -0.15 && sy < 1.15;
     const amt = u.uStrength.value * (1 - u.uNight.value * 0.92) * (1 + u.uUnderwater.value * 1.15);
     this._godrayActive = onScreen && amt > 0.004;
   }
@@ -850,7 +849,11 @@ export class Renderer {
     const f = this._sunF || (this._sunF = new THREE.Vector3());
     const r = this._sunR || (this._sunR = new THREE.Vector3());
     const u = this._sunU || (this._sunU = new THREE.Vector3());
-    f.copy(this._sunDir).negate().normalize();
+    // 阴影用的光照方向按 0.35° 一档量化：太阳每帧都在转，若阴影相机跟着连续转，
+    // 纹素网格本身也在旋转，吸附就失去意义，所有阴影边缘会持续爬动
+    const sd = this._shadowDir || (this._shadowDir = this._sunDir.clone());
+    if (sd.angleTo(this._sunDir) > 0.006) sd.copy(this._sunDir);
+    f.copy(sd).negate().normalize();
     r.set(0, 1, 0).cross(f);
     if (r.lengthSq() < 1e-6) r.set(1, 0, 0);
     r.normalize();
@@ -861,11 +864,7 @@ export class Renderer {
     const pu = Math.round(target.dot(u) / texel) * texel;
     const pf = target.dot(f);
     t.copy(r).multiplyScalar(pr).addScaledVector(u, pu).addScaledVector(f, pf);
-    this.sun.position.set(
-      t.x + this._sunDir.x * d,
-      t.y + this._sunDir.y * d,
-      t.z + this._sunDir.z * d,
-    );
+    this.sun.position.set(t.x + sd.x * d, t.y + sd.y * d, t.z + sd.z * d);
     this.sun.target.position.copy(t);
     this.sun.target.updateMatrixWorld();
   }
@@ -906,7 +905,11 @@ export class Renderer {
     this.composer.setPixelRatio(this.pixelRatio);
     this.bloomComposer.setPixelRatio(this.pixelRatio);
     // 阴影
-    const shadowChanged = r.shadowMap.enabled !== p.shadows || this.sun.shadow.mapSize.x !== p.shadowMap;
+    // 只有阴影开 / 关会改变着色器；单纯换阴影贴图分辨率不需要重编译所有材质
+    const shadowChanged = r.shadowMap.enabled !== p.shadows;
+    // 法线偏移按纹素大小取：低分辨率阴影贴图的纹素更大，偏移太小会出现阴影痤疮（acne）
+    const sc = this.sun.shadow.camera;
+    this.sun.shadow.normalBias = ((sc.right - sc.left) / p.shadowMap) * 0.8;
     r.shadowMap.enabled = p.shadows;
     this.sun.castShadow = p.shadows;
     if (this.sun.shadow.mapSize.x !== p.shadowMap) {
@@ -954,6 +957,10 @@ export class Renderer {
       this.bloomComposer.render();
       this.scene.traverse(this._restoreMaterial);
     }
+    // 阴影贴图每帧只算一次，而且在主画面这一遍算：autoUpdate 会让反射、泛光、主画面各算一次（三倍开销）；
+    // 也不能在泛光 / 体积光遍里算 —— 那两遍的材质被临时换掉了，没有 alphaTest，树叶会投出实心方块的影子。
+    // 反射用的是上一帧的阴影贴图，差一帧看不出来。
+    this.renderer.shadowMap.needsUpdate = true;
     this.composer.render();
   }
 
@@ -1018,6 +1025,30 @@ export class Renderer {
     );
     tm.multiply(rc.projectionMatrix);
     tm.multiply(rc.matrixWorldInverse);
+
+    // 只渲染水面以上的东西（水下的湖床、桥墩挡在镜面相机与水面之间，会在倒影里形成暗斑）：
+    // 斜裁剪近平面（three.js Reflector 的做法）—— 把镜面相机投影矩阵的近平面换成水面本身，
+    // 只改这台相机的投影，不碰任何全局状态。
+    // 不能用 renderer.clippingPlanes：那会让共享材质在倒影 / 主画面之间切换裁剪状态，
+    // 主画面拿到错误的裁剪参数，通天宝塔塔身、浮岛岩石这类不透明方块整片消失。
+    const plane = this._reflPlane || (this._reflPlane = new THREE.Plane());
+    const clip = this._reflClipV || (this._reflClipV = new THREE.Vector4());
+    const q = this._reflQ || (this._reflQ = new THREE.Vector4());
+    plane.normal.set(0, 1, 0);
+    plane.constant = -(L - 0.05);
+    plane.applyMatrix4(rc.matrixWorldInverse);
+    clip.set(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
+    const pm = rc.projectionMatrix.elements;
+    q.x = (Math.sign(clip.x) + pm[8]) / pm[0];
+    q.y = (Math.sign(clip.y) + pm[9]) / pm[5];
+    q.z = -1.0;
+    q.w = (1.0 + pm[10]) / pm[14];
+    clip.multiplyScalar(2.0 / clip.dot(q));
+    pm[2] = clip.x;
+    pm[6] = clip.y;
+    pm[10] = clip.z + 1.0;
+    pm[14] = clip.w;
+    rc.projectionMatrixInverse.copy(rc.projectionMatrix).invert();
 
     // 渲染（隐藏水面，避免反馈）
     this.matWater.visible = false;

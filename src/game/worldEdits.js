@@ -56,7 +56,8 @@ export class WorldEdits {
    */
   load(data) {
     if (!data || !Array.isArray(data.list) || !Array.isArray(data.palette)) return 0;
-    const ids = data.palette.map((n) => (n in BLOCK_ID ? BLOCK_ID[n] : -1));
+    // 只认注册表自己的键（`in` 会把 "constructor"、"toString" 这类原型属性也当成方块名）
+    const ids = data.palette.map((n) => (Object.hasOwn(BLOCK_ID, n) ? BLOCK_ID[n] : -1));
     const replay = () => {
       let n = 0;
       for (let i = 0; i + 3 < data.list.length; i += 4) {

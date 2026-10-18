@@ -42,7 +42,9 @@ export class EventBus {
   emit(name, payload) {
     const set = this._map.get(name);
     if (!set) return;
-    for (const fn of [...set]) {
+    // 快照一份再派发（监听器里可能注销自己）；只有一个监听器时直接调，不分配数组
+    const list = set.size === 1 ? set : [...set];
+    for (const fn of list) {
       try {
         fn(payload);
       } catch (err) {

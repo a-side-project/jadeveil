@@ -26,30 +26,33 @@ const KEYS = [
   ["SPACE", "JUMP  -  HOLD TO SWIM / FLY UP", "PRESS"],
   ["SHIFT", "SPRINT", "sprint"],
   ["C", "CROUCH  -  DESCEND WHEN FLYING", "crouch"],
-  ["LMB", "ATTACK / BREAK BLOCK", "CLICK"],
-  ["RMB", "PLACE BLOCK / TORCH", "CLICK"],
-  ["1-9 / WHEEL", "SELECT ITEM", "PRESS"],
+  ["B", "ADVENTURE / BUILD MODE", "PRESS"],
+  ["LMB", "ATTACK  -  BUILD: BREAK BLOCK", "CLICK"],
+  ["RMB", "BUILD: PLACE BLOCK / TORCH", "CLICK"],
+  ["1-5", "SKILLS  -  BUILD: HOTBAR 1-9", "PRESS"],
+  ["Q", "EVADE", "PRESS"],
   ["E", "INVENTORY", "PRESS"],
   ["F", "SUMMON / DISMISS DRAGON", "PRESS"],
   ["1 MOUNTED", "DRAGON BREATH", "HOLD"],
   ["2-4 MOUNTED", "FIREBALL / DASH / ROAR", "PRESS"],
   ["V", "CAMERA VIEW", "PRESS"],
-  ["O", "SETTINGS", "PRESS"],
-  ["T", "TIME SPEED", "PRESS"],
+  ["M  /  H", "MINIMAP  /  HIDE HUD", "PRESS"],
+  ["O  /  T", "SETTINGS  /  TIME SPEED", "PRESS"],
   ["ESC", "PAUSE", "PRESS"],
 ];
 const TOUCH = [
   ["LEFT THUMB", "MOVE  -  PUSH TO EDGE TO SPRINT", "HOLD"],
   ["RIGHT DRAG", "LOOK AROUND", "HOLD"],
-  ["TAP SCREEN", "ATTACK / BREAK BLOCK", "TAP"],
+  ["TAP SCREEN", "ATTACK  -  BUILD: BREAK BLOCK", "TAP"],
+  ["BIG BUTTON", "ATTACK  -  BUILD: PLACE  -  DRAGON: BREATH", "HOLD"],
+  ["SKILL RING", "SKILLS AROUND THE BIG BUTTON", "TAP"],
   ["JUMP", "JUMP  -  HOLD TO SWIM / FLY UP", "HOLD"],
   ["DOWN", "DESCEND WHEN FLYING / SWIMMING", "HOLD"],
   ["CROUCH", "CROUCH ON / OFF", "TOGGLE"],
-  ["PLACE", "PLACE BLOCK / TORCH", "TAP"],
-  ["HOTBAR", "SELECT ITEM", "TAP"],
-  ["DRAGON", "SUMMON / DISMISS DRAGON", "TAP"],
-  ["BREATH SKILL", "DRAGON BREATH", "HOLD"],
-  ["OTHER SKILLS", "FIREBALL / DASH / ROAR", "TAP"],
+  ["BUILD / FIGHT", "SWITCH MODE", "TAP"],
+  ["HOTBAR", "BUILD: SELECT ITEM", "TAP"],
+  ["MENU  BAG", "PAUSE  -  INVENTORY", "TAP"],
+  ["DRAGON  VIEW", "SUMMON DRAGON  -  CAMERA", "TAP"],
 ];
 
 /**
@@ -248,6 +251,12 @@ export class SettingsUI {
     if (id) node.id = id;
     node.setAttribute("role", "switch");
     node.setAttribute("aria-label", label);
+    node.setAttribute("aria-checked", String(!!on));
+    node.tabIndex = 0;
+    node.addEventListener("keydown", (e) => {
+      if (e.code === "Enter" || e.code === "Space") { e.preventDefault(); node.click(); }
+    });
+    new MutationObserver(() => node.setAttribute("aria-checked", String(node.classList.contains("on")))).observe(node, { attributes: true, attributeFilter: ["class"] });
     const l = document.createElement("span");
     this._text(l, label, { scale: 2 });
     const sw = document.createElement("span");
@@ -462,6 +471,14 @@ export class SettingsUI {
     this.sync();
     this.root.classList.add("open");
     this.isOpen = true;
+  }
+
+  /** 关闭但不触发 onClose（死亡等由外部接管状态的场合）。 */
+  forceClose() {
+    if (!this.isOpen) return;
+    this._clearResetConfirm();
+    this.root.classList.remove("open");
+    this.isOpen = false;
   }
 
   close() {

@@ -137,9 +137,11 @@ export class GraphicsSettings {
 }
 
 /**
- * 自动降档：AUTO 模式下按 4 秒窗口统计帧时间，连续两个窗口的中位数都低于 45 FPS 才降一档。
+ * 自动画质：AUTO 模式下按 4 秒窗口统计帧时间，连续两个窗口的中位数都低于 45 FPS 才降一档。
  *
- *  · 本局内只降不升：避免在两档之间来回抖动（下次启动时会往上试一档，见 GraphicsSettings）
+ *  · 降档后能自己升回来：连续 20 秒（5 个窗口）中位帧率都有余量（≥ 57 FPS）就升一档，最多回到检测出的档位。
+ *    一次临时的卡顿（后台在编译、别的程序占满 GPU）不会让画质一直停在低档、视距只剩一小圈
+ *  · 防抖：升上去又被打回来，下一次升档要等的时间翻倍（20 → 40 → 80 秒…）
  *  · 连续两个慢窗口才算数：读档、区块重建这类短暂卡顿不会把画质拉低
  *  · 窗口内中位帧时间 > 200ms 视为「标签页被节流 / 在后台」，不算 GPU 慢；
  *    窗口不在前台、正在跑自动化测试时不统计
@@ -153,6 +155,10 @@ export class AutoGovernor {
     this.windowT = 0;
     this.settle = 6; // 首次统计前等待（开局加载、编译）
     this.slowWindows = 0;
+    this.fastWindows = 0;
+    this.upgradeWindows = 5; // 连续多少个有余量的窗口才升档（被打回来后翻倍）
+    this._justUpgraded = false;
+    this.onUpgrade = null;
     // 窗口是否在前台（可替换：自动化测试里窗口通常不在前台）
     this.focused = () => document.hasFocus();
   }
@@ -178,12 +184,28 @@ export class AutoGovernor {
     const s = this.samples.slice().sort((a, b) => a - b);
     const median = s[s.length >> 1];
     this.reset(0);
-    if (median > 0.2) { this.slowWindows = 0; return; } // 被节流，不是真的慢
-    if (median <= 1 / 45) { this.slowWindows = 0; return; }
+    if (median > 0.2) { this.slowWindows = 0; this.fastWindows = 0; return; } // 被节流，不是真的慢
+    const i = TIERS.indexOf(this.settings.autoTier);
+    if (median <= 1 / 45) {
+      this.slowWindows = 0;
+      const ceiling = TIERS.indexOf(this.settings.detected?.tier ?? TIERS[TIERS.length - 1]);
+      this.fastWindows = median <= 1 / 57 ? this.fastWindows + 1 : 0;
+      if (this.fastWindows < this.upgradeWindows || i >= ceiling) return;
+      this.fastWindows = 0;
+      this.settings.autoTier = TIERS[i + 1];
+      this.settings.save();
+      this._justUpgraded = true;
+      this.reset(3);
+      this.onUpgrade?.(this.settings.autoTier);
+      return;
+    }
+    this.fastWindows = 0;
     if (++this.slowWindows < 2) return;
     this.slowWindows = 0;
-    const i = TIERS.indexOf(this.settings.autoTier);
     if (i <= 0) return;
+    // 刚升上来又撑不住：下次升档要多等一倍
+    if (this._justUpgraded) this.upgradeWindows *= 2;
+    this._justUpgraded = false;
     this.settings.autoTier = TIERS[i - 1];
     this.settings.save();
     this.reset(3);

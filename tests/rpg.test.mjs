@@ -27,6 +27,9 @@ export const RPG_TEST_SOURCE = `
   const snapshotHp = health.serialize();
   const prevMode = P.state.mode;
   P.state.mode = "test";
+  // 建造相关的用例（放置、消耗、火把）属于建造模式
+  const prevGameMode = P.game.mode;
+  P.setGameMode("build", false);
 
   function reset(x, y, z) {
     player.position.set(x, y, z);
@@ -314,6 +317,7 @@ export const RPG_TEST_SOURCE = `
   health.load(snapshotHp);
   health.dead = false;
   P.state.mode = prevMode;
+  P.setGameMode(prevGameMode, false);
   interaction.hit = null;
   player.keys.clear();
   player.spawnAt(world);

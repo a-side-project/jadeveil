@@ -138,6 +138,11 @@ export class Player {
     this.crouchToggled = false;
     this.sprintToggled = false;
     this._crouchEye = 0; // 视线下降量（平滑过渡，不会一下子掉下去）
+    // 技能接管：forcedMove = { x, z } 时水平速度由技能决定（突刺 / 闪避），不被行走的加减速吃掉；
+    // boostT / boostMax：短时放宽飞行限速（虚空冲刺）
+    this.forcedMove = null;
+    this.boostT = 0;
+    this.boostMax = 0;
     this._noFwdT = 0;
     this._tmp = new THREE.Vector3();
     this._probe = new THREE.Vector3();
@@ -146,6 +151,20 @@ export class Player {
     this.lastSubsteps = 0;
 
     this._bind();
+  }
+
+  /**
+   * 移动规则：这一格挡不挡住当前的移动方式。
+   *
+   * 所有碰撞（AABB、落地支撑、贴面）都只通过这里判断，规则集中在一处：
+   *   步行 / 游泳   实心方块挡住；液体可以进入（游泳）
+   *   骑乘坐骑     由坐骑声明 terrainRules.liquid：末影龙是 "floor" —— 水面像地面一样托住它，
+   *                龙可以贴着水面掠过，但不会潜进水里
+   * 以后加新的坐骑 / 移动方式，只需声明自己的规则，不必在碰撞代码里写特例。
+   */
+  _blocks(id) {
+    if (isSolid(id)) return true;
+    return this.mount?.terrainRules?.liquid === "floor" && isLiquid(id);
   }
 
   /** 玩家是否正在操控角色：键鼠 = 指针已锁定；触屏 = 游戏进行中。 */
@@ -176,12 +195,10 @@ export class Player {
       this.targetPitch = Math.max(-lim, Math.min(lim, this.targetPitch));
     });
 
+    // 轴输入：记录按住的键（移动、跳跃、疾跑、蹲下）。切换式的蹲下 / 疾跑由输入路由调用 toggleCrouch / toggleSprint。
     window.addEventListener("keydown", (e) => {
-      if (e.code === "Space") e.preventDefault();
-      if (!e.repeat && this.engaged) {
-        if (e.code === "KeyC" && this.crouchMode === "toggle") this.toggleCrouch();
-        if ((e.code === "ShiftLeft" || e.code === "ShiftRight") && this.sprintMode === "toggle") this.sprintToggled = !this.sprintToggled;
-      }
+      // 只在操控角色时吞掉空格（否则菜单里用空格激活按钮会失效）
+      if (e.code === "Space" && this.engaged) e.preventDefault();
       this.keys.add(e.code);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -194,6 +211,10 @@ export class Player {
       this.position.y + this.eyeH - this._crouchEye + this.bobAmount,
       this.position.z,
     );
+  }
+
+  toggleSprint() {
+    this.sprintToggled = !this.sprintToggled;
   }
 
   /** 切换模式下的蹲下（键盘 C / 触屏 CROUCH 按钮）。飞行、游泳、骑乘时不响应。 */
@@ -209,9 +230,13 @@ export class Player {
   _updateCrouch(dt) {
     const keys = this.keys;
     if (this.mount || this.flying || this.swimming) {
-      // 骑乘由坐骑接管碰撞体；飞行 / 游泳时 C 是下降。都不蹲
-      if (this.crouching && !this.mount) this.bh = PLAYER_H;
-      this.crouching = false;
+      // 骑乘由坐骑接管碰撞体；飞行 / 游泳时 C 是下降。都不蹲 ——
+      // 但站起来同样要先确认头顶有空间（旧版直接恢复身高，会卡进低矮的天花板里）
+      if (this.crouching && !this.mount) {
+        this.bh = PLAYER_H;
+        if (this.collides(this.position.x, this.position.y, this.position.z)) this.bh = CROUCH_H;
+        else this.crouching = false;
+      } else if (this.mount) this.crouching = false;
       this.crouchToggled = false;
     } else {
       // 只认 C：Ctrl 在浏览器里和 W 组合是「关闭标签页」，不能拿来做需要按住的游戏键
@@ -288,7 +313,7 @@ export class Player {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
         for (let x = x0; x <= x1; x++) {
-          if (isSolid(this.world.get(x, y, z))) return true;
+          if (this._blocks(this.world.get(x, y, z))) return true;
         }
       }
     }
@@ -309,7 +334,7 @@ export class Player {
     const y = Math.floor(py - EPS); // 脚底正下方那一格
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
-        if (isSolid(this.world.get(x, y, z))) return true;
+        if (this._blocks(this.world.get(x, y, z))) return true;
       }
     }
     return false;
@@ -431,7 +456,7 @@ export class Player {
     const z1 = Math.floor(p.z + w - EPS);
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
-        if (isSolid(this.world.get(x, y, z))) return true;
+        if (this._blocks(this.world.get(x, y, z))) return true;
       }
     }
     return false;
@@ -450,7 +475,7 @@ export class Player {
       for (let a = a0; a <= a1; a++) {
         const x = axis === "x" ? value : a;
         const z = axis === "x" ? a : value;
-        if (isSolid(this.world.get(x, y, z))) return true;
+        if (this._blocks(this.world.get(x, y, z))) return true;
       }
     }
     return false;
@@ -544,6 +569,13 @@ export class Player {
       this._updateWalk(dt, fwd, side, sinY, cosY, keys);
     }
 
+    // ---- 技能接管水平速度（突刺 / 闪避）：与帧率无关，距离 = 速度 × 时长 ----
+    if (this.forcedMove) {
+      this.velocity.x = this.forcedMove.x;
+      this.velocity.z = this.forcedMove.z;
+    }
+    this.boostT = Math.max(0, this.boostT - dt);
+
     // ---- 蹲着走到边缘不会掉下去（MC 的潜行）：这一步会让脚下失去支撑的轴，速度清零 ----
     if (this.crouching && this.onGround && !this.flying && !this.swimming) {
       const p = this.position;
@@ -571,6 +603,12 @@ export class Player {
     if (this.onGround) {
       if (!wasGrounded) this.onLand?.(Math.max(0, this._peakY - this.position.y));
       this._peakY = this.position.y;
+      // 免摔保护只管「下龙后的那一次落地」：站在地上就失效（旧版只在空中→落地那一帧清除，
+      // 在地面或水里下龙，这个标记会一直留着，几分钟后从高处跳下也不扣血）
+      this.safeFall = false;
+    } else if (this.swimming || this.inWater) {
+      this.safeFall = false;
+      this._peakY = Math.max(this._peakY, this.position.y);
     } else {
       this._peakY = Math.max(this._peakY, this.position.y);
     }
@@ -641,7 +679,8 @@ export class Player {
   _updateFlight(dt, fwd, side, sinY, cosY, keys) {
     const v = this.velocity;
     const tune = this.flyTuning;
-    const maxSpeed = this.sprinting ? tune.maxFast : tune.max;
+    // 短时加速（龙的虚空冲刺）：限速临时放宽，否则冲量在下一帧就被限速吃掉
+    const maxSpeed = Math.max(this.sprinting ? tune.maxFast : tune.max, this.boostT > 0 ? this.boostMax : 0);
 
     // 视线方向（含俯仰）
     const cp = Math.cos(this.pitch);
@@ -668,7 +707,8 @@ export class Player {
     }
     // 垂直推进
     if (keys.has("Space")) ay += tune.accel * 0.85;
-    if (keys.has("ControlLeft") || keys.has("KeyC")) ay -= tune.accel * 0.85;
+    // 下降只用 C：Ctrl 在浏览器里和 W / S / D 组合是关标签页、保存、加书签
+    if (keys.has("KeyC")) ay -= tune.accel * 0.85;
 
     // 俯冲：朝下飞时额外加速（重力感）
     if (fwdY < -0.15 && fwd > 0) {
@@ -694,7 +734,7 @@ export class Player {
     // 防悬浮：无推进输入时，保留一个最小滑行速度，
     // 避免阻力把速度衰减到 0 导致玩家停在半空。
     const hasThrust = fwd !== 0 || side !== 0 || keys.has("Space") ||
-                      keys.has("ControlLeft") || keys.has("KeyC");
+                      keys.has("KeyC");
     if (!hasThrust) {
       const sp2 = v.length();
       if (sp2 > 1e-4 && sp2 < FLY_GLIDE_MIN) {
@@ -730,7 +770,7 @@ export class Player {
    *
    *  · 浮力按浸没比例驱动：浸得越深托得越强，
    *    于是玩家自然停在「头露出水面」的平衡位置，而不是一直沉底或一直上飘
-   *  · Space 上浮、Ctrl / C 下潜
+   *  · Space 上浮、C 下潜
    *  · 水的粘滞阻力远大于空气，松手后很快滑行减速
    */
   _updateSwim(dt, fwd, side, sinY, cosY, keys) {
@@ -745,7 +785,7 @@ export class Player {
     v.z += (dirZ * speed - v.z) * acc;
 
     const up = keys.has("Space");
-    const down = keys.has("ControlLeft") || keys.has("KeyC");
+    const down = keys.has("KeyC");
 
     // 目标垂直速度 = 自重下沉 + 浮力上托
     let targetVy = -WATER_SINK + BUOYANCY * this.submersion;
@@ -786,7 +826,8 @@ export class Player {
     // 调试/截图机位：相机由外部摆放，控制器不接管
     if (this.mode === "debug") return;
     const cam = this.camera;
-    const eye = this.eyePosition.clone();
+    // 每帧调用：复用临时向量，不分配新对象
+    const eye = (this._eye ||= new THREE.Vector3()).copy(this.eyePosition);
     const horizSpeed = Math.hypot(this.velocity.x, this.velocity.z);
 
     if (this.mode === "first") {
@@ -798,7 +839,7 @@ export class Player {
       cam.fov = this.baseFov + Math.min((horizSpeed / RUN) * 5, 5);
       cam.updateProjectionMatrix();
     } else if (this.mode === "third") {
-      const dir = new THREE.Vector3(
+      const dir = (this._camDir ||= new THREE.Vector3()).set(
         Math.sin(this.yaw) * Math.cos(this.pitch),
         -Math.sin(this.pitch),
         Math.cos(this.yaw) * Math.cos(this.pitch),

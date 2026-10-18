@@ -73,31 +73,33 @@ export const COLLISION_TEST_SOURCE = `
   }
 
   // ---------- 测试 3：水平高速撞墙 ----------
-  // 先扫描找一段真正连续的实心墙（避开城门开口）
+  // 自己在高空砌一面墙（地面 + 3 格高的墙）：不依赖地图上恰好有什么建筑 ——
+  // 旧版在世界里找「连续 3 格实心」的柱子当墙，地图一变就会找到比人矮的矮墙，测的就不是撞墙了
   const wallTests = [];
-  let wallX = null;
-  let wallZ = null;
-  for (let z = 40; z <= 100 && wallX === null; z++) {
-    // 在 x=30 附近找连续 3 格实心的位置
-    let run = 0;
-    for (let y = 34; y < 44; y++) {
-      if (world.solidAt(30, y, z)) run++;
-      else run = 0;
-      if (run >= 3) { wallX = 30; wallZ = z; break; }
+  {
+    const STONE = BLOCKS.findIndex((b) => b && b.name === "stone_bricks");
+    let site = null;
+    for (let x = 120; x >= 40 && !site; x -= 8) for (let z = 120; z >= 40 && !site; z -= 8) {
+      let clear = true;
+      for (let dx = -8; dx <= 8 && clear; dx++) for (let dz = -3; dz <= 3 && clear; dz++)
+        for (let y = 118; y <= 130; y++) if (world.get(x + dx, y, z + dz) !== 0) { clear = false; break; }
+      if (clear) site = { x, z, y: 120 };
     }
-  }
-  if (wallX !== null) {
-    const gy = world.groundHeight(wallX - 6, wallZ);
-    reset(wallX - 6, gy + 1.2, wallZ + 0.5);
+    const placed = [];
+    const put = (x, y, z) => { placed.push([x, y, z]); world.set(x, y, z, STONE); };
+    for (let dx = -8; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) put(site.x + dx, site.y, site.z + dz);
+    for (let dz = -2; dz <= 2; dz++) for (let dy = 1; dy <= 3; dy++) put(site.x, site.y + dy, site.z + dz);
+    const wallX = site.x;
+    reset(wallX - 6 + 0.5, site.y + 1.001, site.z + 0.5);
     player.velocity.x = 120;
     for (let i = 0; i < 120; i++) {
       player.update(1 / 60);
       if (player.position.x > wallX + 2) break;
     }
-    const ok = player.position.x < wallX + 1.5;
-    wallTests.push({ wallAt: [wallX, wallZ], finalX: +player.position.x.toFixed(2), pass: ok });
-  } else {
-    wallTests.push({ note: "No solid wall found, skipped", pass: true });
+    // 身体右缘必须贴在墙面（x = wallX）之前
+    const ok = player.position.x + player.hw <= wallX + 1e-3;
+    wallTests.push({ wallAt: [wallX, site.z], finalX: +player.position.x.toFixed(3), pass: ok });
+    for (const [x, y, z] of placed) world.set(x, y, z, 0);
   }
   results.push({ test: "Horizontal high-speed wall hit", detail: wallTests, pass: wallTests.every((t) => t.pass) });
 
@@ -214,12 +216,12 @@ export const COLLISION_TEST_SOURCE = `
     player.flying = true;
     player.pitch = 0;
     player.targetPitch = 0;
-    player.keys.add("ControlLeft"); // 持续下降
+    player.keys.add("KeyC"); // 持续下降（旧版按 Ctrl：Ctrl 早已不是下降键，玩家根本不动，这条测试形同虚设）
     for (let i = 0; i < 240; i++) {
       player.update(1 / 60);
       if (player.position.y < island.y - 2) break;
     }
-    player.keys.delete("ControlLeft");
+    player.keys.delete("KeyC");
     const ok = player.position.y >= island.y - 0.05;
     results.push({
       test: "Fly down onto island top",

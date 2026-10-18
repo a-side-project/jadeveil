@@ -16,7 +16,7 @@ export class ChunkManager {
     this.group.name = "voxel-chunks";
     renderer.scene.add(this.group);
 
-    this.meshes = new Map(); // key -> {opaque, cutout, water, cloud}
+    this.meshes = new Map(); // key -> {opaque, cutout, water}
     this.viewDistance = opts.viewDistance ?? 7; // 区块
     this.budgetPerFrame = opts.budgetPerFrame ?? 2;
     this.queue = [];
@@ -73,24 +73,27 @@ export class ChunkManager {
     assign("opaque", geos.opaque, this.renderer.matOpaque);
     assign("cutout", geos.cutout, this.renderer.matCutout, { cast: true });
     assign("water", geos.water, this.renderer.matWater, { cast: false });
-    assign("cloud", geos.cloud, this.renderer.matCloud, { cast: false });
   }
 
   /**
-   * 处理脏区块队列（每帧限量，避免掉帧）。
-   * 光照波及的重建优先于远处的首次加载，但每帧最多一个（单个城区区块约 5ms）。
+   * 处理脏区块队列（每帧限时，避免掉帧）。
+   * 按时间而不是按个数：每帧在 ms 毫秒内尽量多建（至少一个、最多 budget 个）——
+   * 固定每帧 2 个时，帧率一低（或者飞得快）远处的区块就一块一块慢慢冒出来，像视距被砍了。
+   * 光照波及的重建优先于远处的首次加载，但每帧最多一个（单个城区区块约 2.5~5ms）。
    */
-  processDirty(budget = this.budgetPerFrame) {
+  processDirty(budget = this.budgetPerFrame, ms = Infinity) {
     let n = 0;
+    const t0 = performance.now();
     for (const k of this.lightQueue) {
-      if (n >= Math.min(1, budget)) return n;
+      if (n >= Math.min(1, budget)) break; // 最多一个，剩下的预算留给首次加载（旧版直接 return，加载队列会被饿死）
       this.lightQueue.delete(k);
       const [cx, cz] = VoxelWorld.decode(k);
       this.build(cx, cz);
       n++;
     }
-    while (this.queue.length && n < budget) {
+    while (this.queue.length && n < budget && (n === 0 || performance.now() - t0 < ms)) {
       const [cx, cz] = this.queue.shift();
+      if (this.meshes.has(this.key(cx, cz))) continue; // 已经建好（例如编辑时被提前重建）
       this.build(cx, cz);
       n++;
     }
@@ -128,7 +131,7 @@ export class ChunkManager {
       // 卸载远处
       for (const [k, entry] of this.meshes) {
         if (wanted.has(k)) continue;
-        for (const slot of ["opaque", "cutout", "water", "cloud"]) {
+        for (const slot of ["opaque", "cutout", "water"]) {
           const m = entry[slot];
           if (m) {
             this.group.remove(m);
@@ -139,11 +142,14 @@ export class ChunkManager {
       }
     }
 
-    // 脏区块（玩家编辑）当帧重建：放下 / 挖掉方块要立刻看到
+    // 脏区块（玩家编辑）当帧重建：放下 / 挖掉方块要立刻看到。
+    // 只重建已经有网格的区块 —— 还没建过的在加载队列里，排到了自然会用最新数据去建
+    // （旧版开局 markAllDirty 后会把视距内所有区块在一帧里同步建完，再被队列重复建一遍）
     const dirty = this.world.takeDirty();
     if (dirty.length) {
       for (const k of dirty) {
         this.world.lightDirty.delete(k);
+        if (!this.meshes.has(k)) continue;
         const [cx, cz] = VoxelWorld.decode(k);
         const dx = cx - pcx;
         const dz = cz - pcz;
@@ -168,7 +174,7 @@ export class ChunkManager {
       const dz = cz * CW + CW / 2 - playerPos.z;
       const d2 = dx * dx + dz * dz;
       const visible = d2 <= cd2;
-      for (const slot of ["opaque", "cutout", "water", "cloud"]) {
+      for (const slot of ["opaque", "cutout", "water"]) {
         const m = entry[slot];
         if (m) m.visible = visible;
       }
@@ -208,7 +214,7 @@ export class ChunkManager {
   get triangles() {
     let t = 0;
     for (const e of this.meshes.values()) {
-      for (const slot of ["opaque", "cutout", "water", "cloud"]) {
+      for (const slot of ["opaque", "cutout", "water"]) {
         const m = e[slot];
         if (m && m.geometry.index) t += m.geometry.index.count / 3;
       }

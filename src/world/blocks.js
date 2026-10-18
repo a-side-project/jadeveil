@@ -18,6 +18,7 @@ const def = (name, faces, opts = {}) => ({
   cutout: !!opts.cutout,
   unbreakable: !!opts.unbreakable,
   model: opts.model || null,
+  flow: opts.flow || 0, // 流动水的等级（0 = 水源 / 非流体）
   label: opts.label || name,
 });
 
@@ -122,6 +123,11 @@ export const BLOCKS = [
   def("copper_plate", all("copper_plate"), { label: "COPPER PLATE" }),
   def("straw_mat", tsc("straw_mat", "oak_planks"), { label: "STRAW MAT" }),
   def("silk_carpet", tsc("silk_carpet", "red_brick"), { label: "SILK CARPET" }),
+
+  // ---- 流动的水（world/blockPhysics.js）：等级 1–7，离水源越远越浅；源头仍是上面的 water ----
+  ...[1, 2, 3, 4, 5, 6, 7].map((n) => def(`water_flow_${n}`, all("water"), {
+    solid: false, opaque: false, liquid: true, flow: n, label: "FLOWING WATER",
+  })),
 ];
 
 export const BLOCK_ID = {};
@@ -150,6 +156,18 @@ export function isOpaque(id) {
 
 export function isLiquid(id) {
   return BLOCKS[id] ? BLOCKS[id].liquid : false;
+}
+
+/** 流体等级：水源 0，流动水 1..7；不是水返回 -1。 */
+export function waterLevel(id) {
+  const b = BLOCKS[id];
+  if (!b || !b.liquid) return -1;
+  return b.flow;
+}
+
+/** 等级 → 方块 id（0 = 水源）。 */
+export function waterId(level) {
+  return level <= 0 ? BLOCK_ID.water : BLOCK_ID[`water_flow_${level}`];
 }
 
 /** 是否不可破坏（基岩等世界底方块）。 */

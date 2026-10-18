@@ -11,7 +11,9 @@
  * 首次安装时预缓存页面骨架与图标；其余模块、贴图、音效在第一次游玩时自然进入缓存。
  * 改策略或缓存结构时把 CACHE 的版本号加一，activate 会清掉旧缓存。
  */
-const CACHE = "jadeveil-v1";
+const CACHE = "jadeveil-v2";
+// 弱网时页面导航最多等这么久，超时就用缓存的页面外壳先打开（不会在白屏上一直转圈）
+const NAV_TIMEOUT_MS = 6000;
 const SHELL = [
   "/",
   "/index.html",
@@ -48,7 +50,24 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith((async () => {
     try {
-      const res = await fetch(req);
+      let res;
+      if (req.mode === "navigate") {
+        const cachedShell = caches.match(req, { ignoreSearch: true }).then((c) => c || caches.match("/index.html"));
+        const net = fetch(req);
+        const timeout = new Promise((r) => setTimeout(r, NAV_TIMEOUT_MS, null));
+        res = await Promise.race([net, timeout]);
+        if (!res) {
+          const shell = await cachedShell;
+          if (shell) {
+            // 后台继续把新页面取回来放进缓存，下次打开就是新的
+            net.then((fresh) => { if (fresh.ok) caches.open(CACHE).then((c) => c.put(req, fresh)); }).catch(() => {});
+            return shell;
+          }
+          res = await net;
+        }
+      } else {
+        res = await fetch(req);
+      }
       if (res.ok && res.type === "basic") {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});

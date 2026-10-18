@@ -39,6 +39,8 @@ import { QUALITY_TEST_SOURCE } from "../tests/quality.test.mjs";
 import { RPG_TEST_SOURCE } from "../tests/rpg.test.mjs";
 import { NPC_TEST_SOURCE } from "../tests/npc.test.mjs";
 import { UX_TEST_SOURCE } from "../tests/ux.test.mjs";
+import { WORLD_TEST_SOURCE } from "../tests/world.test.mjs";
+import { SOAK_TEST_SOURCE } from "../tests/soak.test.mjs";
 import { AudioManager } from "./audio/audioManager.js";
 import { events } from "./game/events.js";
 import { Inventory } from "./game/inventory.js";
@@ -65,6 +67,11 @@ import { installRotateGuard } from "./ui/rotateGuard.js";
 import { Fullscreen } from "./ui/fullscreen.js";
 import { LightEngine } from "./world/lighting.js";
 import { makeLit, EntityLightProbe } from "./core/entityLight.js";
+import { PlayerSkills } from "./game/skills.js";
+import { BlockPhysics } from "./world/blockPhysics.js";
+import { Destruction } from "./game/destruction.js";
+import { scheduleFor } from "./core/schedule.js";
+import { InputRouter } from "./core/input.js";
 
 // 触屏模式必须最先确定：界面缩放下限、操作说明、竖屏提示都依赖它
 const touchMode = detectTouch();
@@ -175,8 +182,16 @@ async function boot() {
 
   // 6. 游戏系统
   const fx = new FXParticles(renderer.scene);
-  fx.setViewportHeight(window.innerHeight);
-  window.addEventListener("resize", () => fx.setViewportHeight(window.innerHeight));
+  // 不发光的碎块（爆炸碎石、木屑）：普通混合、写深度，不进泛光
+  const debrisFx = new FXParticles(renderer.scene, 2500, { solid: true });
+  // 点精灵大小以绘制缓冲区像素计：乘上渲染分辨率，换画质档位时粒子大小不变
+  const fitFx = () => {
+    const h = window.innerHeight * renderer.pixelRatio;
+    fx.setViewportHeight(h);
+    debrisFx.setViewportHeight(h);
+  };
+  fitFx();
+  window.addEventListener("resize", fitFx);
   const combat = new Combat();
   const edits = new WorldEdits(world);
   const inventory = new Inventory();
@@ -191,6 +206,39 @@ async function boot() {
   const mount = new DragonMount({
     scene: renderer.scene, player, avatar, world, combat, fx, audio, camera: renderer.camera,
   });
+
+  // 地形破坏（火球炸坑、龙息烧草木）与方块物理（水流、沙落、花草倒伏）
+  const destruction = new Destruction({ world, edits, drops, fx, debris: debrisFx, atlas });
+  mount.destruction = destruction;
+  const physics = new BlockPhysics({ world, edits, drops });
+
+  // 人物技能（冒险模式）
+  const skills = new PlayerSkills({
+    player, avatar, health, combat, fx, world, edits, audio, camera: renderer.camera,
+    terrainDamage: () => destruction.enabled,
+  });
+
+  /**
+   * 两种全局模式：
+   *   adventure（默认）冒险 —— 技能栏取代快捷栏，左键出招，不挖不放
+   *   build             建造 —— 我的世界：左键挖、右键放、快捷栏选方块
+   */
+  const game = { mode: "adventure", manualClock: false };
+  function setGameMode(m, announce = true) {
+    if (m !== "adventure" && m !== "build") return;
+    game.mode = m;
+    rpgHud.setGameMode(m);
+    hud.gameMode = m;
+    syncHeld();
+    if (announce) {
+      // 提示按输入方式写：触屏上没有鼠标左右键、没有数字键
+      const tip = touchMode
+        ? (m === "build" ? "BUILD MODE - TAP TO BREAK  BUTTON TO PLACE" : "ADVENTURE MODE - SKILLS ON THE RIGHT WHEEL")
+        : (m === "build" ? "BUILD MODE - LMB BREAK  RMB PLACE" : "ADVENTURE MODE - SKILLS 1-5  Q EVADE");
+      hud.showItemName(tip);
+      audio.uiSelect?.();
+    }
+  }
 
   // 训练场的火把与假人（假人同时在导航网格上标为障碍，居民会绕开）
   for (const [x, y, z] of yard.torches) torches.onBlockChange(x, y, z, world.get(x, y, z));
@@ -217,7 +265,7 @@ async function boot() {
   hud.audio = audio;
   hud.inventory = inventory;
   hud.mount = mount;
-  const rpgHud = new RpgHud({ atlas, inventory, health, mount, combat, camera: renderer.camera, player });
+  const rpgHud = new RpgHud({ atlas, inventory, health, mount, combat, camera: renderer.camera, player, skills });
   const invUI = new InventoryUI({
     inventory,
     hud: rpgHud,
@@ -244,6 +292,7 @@ async function boot() {
 
   // 世界编辑 → 火把外观、NPC 导航；支撑方块被挖掉时火把掉落
   events.on("world:edit", ({ x, y, z, id, prev }) => {
+    physics.wake(x, y, z);
     torches.onBlockChange(x, y, z, id);
     nav.onWorldEdit(x, z);
     if (isSolid(prev) && !isSolid(id)) {
@@ -256,8 +305,9 @@ async function boot() {
 
   // 手持物：背包选中格 → 交互可放置的方块 + 化身手里的模型
   const syncHeld = () => {
-    const def = inventory.selectedItem;
-    interaction.selected = def && def.kind === "block" ? def.blockId : null;
+    // 冒险模式手里永远是武器（初始武器玉剑）；建造模式拿快捷栏选中的东西
+    const def = game.mode === "build" ? inventory.selectedItem : ITEMS.get("sword_jade");
+    interaction.selected = game.mode === "build" && def && def.kind === "block" ? def.blockId : null;
     avatar.setHeldItem(def);
   };
   events.on("inventory:change", syncHeld);
@@ -265,7 +315,7 @@ async function boot() {
 
   events.on("item:pickup", () => audio.pickup());
   events.on("entity:hit", ({ crit, source }) => {
-    if (source === "melee") audio.hitEntity(crit);
+    if (source === "melee" || source === "blade" || source === "jade-skill") audio.hitEntity(crit);
   });
   events.on("player:damage", ({ amount }) => {
     audio.hurt();
@@ -274,8 +324,16 @@ async function boot() {
   events.on("player:death", () => {
     audio.death();
     if (mount.active) mount.dismiss();
+    skills.cancel();
+    // 死亡时关掉所有窗口（背包 / 设置）：否则重生后窗口还盖在画面上，按键也被吞掉
+    invUI.hide?.();
+    settingsUI.forceClose?.();
     state.mode = "dead";
     releasePointer();
+  });
+  events.on("skill:learned", ({ label }) => {
+    hud.showItemName(`NEW SKILL LEARNED: ${label}`);
+    audio.pickup();
   });
   events.on("ui:toast", (text) => {
     hud.showItemName(text);
@@ -335,6 +393,8 @@ async function boot() {
     time: Math.round(daynight.time),
     world: edits.serialize(),
     drops: drops.serialize(),
+    mode: game.mode,
+    skills: skills.serialize(),
   }));
 
   function applySave(d) {
@@ -347,7 +407,7 @@ async function boot() {
       player.velocity.set(0, 0, 0);
       player.yaw = player.targetYaw = d.player.yaw || 0;
       player.pitch = player.targetPitch = d.player.pitch || 0;
-      player.mode = d.player.mode || "first";
+      player.mode = d.player.mode; // 已由 validateSave 校验为 first / third / orbit
       avatar.setMode(player.mode);
       player.resetFall();
       // 存档点若已被挖空 / 卡在方块里，回到安全出生点
@@ -355,6 +415,8 @@ async function boot() {
     }
     if (Number.isFinite(d.time)) daynight.time = d.time;
     drops.load(d.drops);
+    skills.load(d.skills);
+    setGameMode(d.mode === "build" ? "build" : "adventure", false);
     state.playTime = d.playTime || 0;
     chunks.update(player.position, true);
   }
@@ -387,6 +449,8 @@ async function boot() {
       inventory.clear();
       for (const [id, n] of STARTER_KIT) inventory.add(id, n);
       inventory.select(0);
+      skills.reset();
+      setGameMode("adventure", false);
       player.spawnAt(world);
       startPlay(true);
       save.save();
@@ -501,6 +565,7 @@ async function boot() {
   /* ---------------- 设置窗口 ---------------- */
   function applyGraphics(p) {
     renderer.applyQuality(p);
+    fitFx();
     chunks.setQuality(p);
     petals.setDensity(p.particles);
     skyLanterns.setDensity(p.particles);
@@ -543,6 +608,12 @@ async function boot() {
     hud.showItemName(msg);
     if (state.mode === "title") menus.titleMessage(`${msg}  (SETTINGS > GRAPHICS)`, "#6fc0ae");
   });
+  governor.onUpgrade = () => {
+    applyGraphics(graphics.profile);
+    settingsUI.sync();
+  };
+
+  setGameMode("adventure", false);
 
   // 7.5 灯笼光核：在每个灯笼位置放一个高亮自发光小球，
   //     给 bloom 一个明确的溢光源（体素本身受贴图限制，亮度不够）
@@ -598,7 +669,6 @@ async function boot() {
   applyGraphics(graphics.profile);
 
   /* ---------------- 输入 ---------------- */
-  const skillByDigit = { Digit1: "breath", Digit2: "fireball", Digit3: "dash", Digit4: "roar" };
   function openInventory() {
     if (state.mode !== "play" || mount.active) return;
     state.mode = "inventory";
@@ -606,66 +676,65 @@ async function boot() {
     invUI.show();
   }
 
-  window.addEventListener("keydown", (e) => {
-    // 设置窗口打开时：ESC / O 关闭，其余按键不进游戏
-    if (settingsUI.isOpen) {
-      if (e.code === "Escape" || e.code === "KeyO") settingsUI.close();
-      return;
-    }
-    if (e.code === "KeyO" && (state.mode === "play" || state.mode === "paused" || state.mode === "title")) {
-      openSettings();
-      return;
-    }
-    if (e.code === "KeyE" && (state.mode === "play" || state.mode === "inventory")) {
-      if (state.mode === "play") openInventory();
-      else invUI.close();
-      return;
-    }
-    if (e.code === "Escape" && state.mode === "inventory") {
-      invUI.close();
-      return;
-    }
+  // 输入路由（core/input.js）：所有离散按键在这一处按顺序匹配，第一条命中的独占这次按键
+  const inMode = (...m) => (c) => m.includes(c.mode);
+  const live = (c) => c.mode === "play" && !c.dead; // 正在操控角色
+  const input = new InputRouter(() => ({
+    mode: state.mode, settingsOpen: settingsUI.isOpen, mounted: mount.active, gameMode: game.mode, dead: health.dead,
+  }));
+  input
+    // ---- 界面窗口（最优先：窗口打开时按键不进游戏） ----
+    .bind({ name: "close-settings", keys: ["Escape", "KeyO"], when: (c) => c.settingsOpen, run: () => settingsUI.close() })
+    .bind({ name: "open-settings", keys: ["KeyO"], when: inMode("play", "paused", "title"), run: () => openSettings() })
+    .bind({ name: "inventory", keys: ["KeyE"], when: (c) => (c.mode === "play" && !c.mounted && !c.dead) || c.mode === "inventory",
+      run: (c) => (c.mode === "play" ? openInventory() : invUI.close()) })
+    .bind({ name: "close-inventory", keys: ["Escape"], when: inMode("inventory"), run: () => invUI.close() })
     // 全屏时 ESC 由游戏接管（键盘锁）：轻按暂停，不会把玩家踢出全屏
-    if (e.code === "Escape" && state.mode === "play") {
-      pauseGame();
-      return;
-    }
-    if (state.mode !== "play") return;
-    if (e.repeat) return;
-    if (e.code === "KeyF") {
-      if (!health.dead) mount.toggle();
-      return;
-    }
-    if (mount.active && skillByDigit[e.code]) {
-      const id = skillByDigit[e.code];
-      if (id === "breath") mount.setBreath(true);
-      else mount.useSkill(id);
-      return;
-    }
-    if (e.code === "KeyV") {
+    .bind({ name: "pause", keys: ["Escape"], when: live, run: () => pauseGame() })
+    // ---- 游戏中 ----
+    .bind({ name: "mount", keys: ["KeyF"], when: live, run: () => mount.toggle() })
+    .bind({ name: "dragon-breath", keys: ["Digit1"], when: (c) => live(c) && c.mounted, run: () => mount.setBreath(true) })
+    .bind({ name: "dragon-skill", keys: ["Digit2", "Digit3", "Digit4"], when: (c) => live(c) && c.mounted,
+      run: (c, e) => mount.useSkill({ Digit2: "fireball", Digit3: "dash", Digit4: "roar" }[e.code]) })
+    .bind({ name: "player-skill", keys: ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "KeyQ"], when: (c) => live(c) && !c.mounted && c.gameMode === "adventure",
+      run: (c, e) => skills.use({ Digit1: "slash", Digit2: "lunge", Digit3: "whirl", Digit4: "crescent", Digit5: "mend", KeyQ: "evade" }[e.code]) })
+    .bind({ name: "hotbar", keys: ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"],
+      when: (c) => live(c) && !c.mounted && c.gameMode === "build", run: (c, e) => hud.selectHotbar(Number(e.code.slice(5)) - 1) })
+    // 骑龙时不能切模式（手里的东西会在龙背上变来变去；触屏的模式按钮骑乘时也是隐藏的）
+    .bind({ name: "game-mode", keys: ["KeyB"], when: (c) => live(c) && !c.mounted, run: () => setGameMode(game.mode === "build" ? "adventure" : "build") })
+    .bind({ name: "camera", keys: ["KeyV"], when: live, run: () => {
       const m = player.cycleMode();
       hud.showItemName(CAMERA_LABELS[m]);
-      hud.setLocked(player.locked);
-    }
-    if (e.code === "KeyB") {
-      player.headBob = !player.headBob;
-      hud.showItemName(player.headBob ? "HEAD BOB ON" : "HEAD BOB OFF");
-    }
-    if (e.code === "KeyT") {
+      hud.setLocked(player.engaged);
+    } })
+    .bind({ name: "crouch-toggle", keys: ["KeyC"], when: (c) => live(c) && player.crouchMode === "toggle", run: () => player.toggleCrouch() })
+    .bind({ name: "sprint-toggle", keys: ["ShiftLeft", "ShiftRight"], when: (c) => live(c) && player.sprintMode === "toggle", run: () => player.toggleSprint() })
+    .bind({ name: "time-speed", keys: ["KeyT"], when: live, run: () => {
       daynight.speed = daynight.speed >= 40 ? 1 : daynight.speed * 4;
       hud.showItemName(`TIME SPEED x${daynight.speed}`);
-    }
-  });
-  window.addEventListener("keyup", (e) => {
-    if (e.code === "Digit1" && mount.active) mount.setBreath(false);
-  });
+    } })
+    .bind({ name: "hide-hud", keys: ["KeyH"], when: live, run: () => hud.toggleHidden() })
+    .bind({ name: "minimap", keys: ["KeyM"], when: live, run: () => hud.toggleMinimap() })
+    .bind({ name: "debug", keys: ["F3"], when: inMode("play", "paused"), preventDefault: true, run: () => hud.toggleDebug() })
+    .bindUp({ name: "dragon-breath-stop", keys: ["Digit1"], when: (c) => c.mounted, run: () => mount.setBreath(false) });
+
   // 骑乘时鼠标：左键按住吐息、右键末影火球
+  // 冒险模式：左键出招，按住连续普攻（冷却到了就出下一刀）
+  const mouseHeld = { left: false };
   canvas.addEventListener("mousedown", (e) => {
-    if (state.mode !== "play" || !player.locked || !mount.active) return;
-    if (e.button === 0) mount.setBreath(true);
-    else if (e.button === 2) mount.useSkill("fireball");
+    if (state.mode !== "play" || !player.locked) return;
+    if (e.button === 0) mouseHeld.left = true;
+    if (mount.active) {
+      if (e.button === 0) mount.setBreath(true);
+      else if (e.button === 2) mount.useSkill("fireball");
+      return;
+    }
+    if (game.mode === "adventure" && e.button === 0) skills.use("slash");
   });
+  // 切出窗口时视为松开鼠标（否则回来后会一直自动普攻，直到下一次点击）
+  window.addEventListener("blur", () => { mouseHeld.left = false; if (mount.active) mount.setBreath(false); });
   window.addEventListener("mouseup", (e) => {
+    if (e.button === 0) mouseHeld.left = false;
     if (e.button === 0 && mount.active) mount.setBreath(false);
   });
 
@@ -675,10 +744,12 @@ async function boot() {
       player,
       interaction,
       mount,
-      skillEls: rpgHud.skillEls,
+      skills,
+      getMode: () => game.mode,
       click: () => audio.uiClick(),
       onPause: () => { if (state.mode === "play") pauseGame(); },
       onInventory: () => openInventory(),
+      onMode: () => setGameMode(game.mode === "build" ? "adventure" : "build"),
       onMount: () => { if (!health.dead) mount.toggle(); },
       onCamera: () => {
         const m = player.cycleMode();
@@ -699,7 +770,7 @@ async function boot() {
   const totalQueued = Math.max(1, chunks.queue.length);
   let guard = 0;
   while (chunks.queue.length && guard < 600) {
-    chunks.processDirty(2);
+    chunks.processDirty(64, 40); // 加载画面：每轮 40ms 尽量多建，再让出主线程更新进度条
     guard++;
     const done = totalQueued - chunks.queue.length;
     hud0.set(0.7 + Math.min(0.28, (done / totalQueued) * 0.28), "BUILDING CHUNKS...");
@@ -765,24 +836,49 @@ async function boot() {
   const sunTarget = new THREE.Vector3();
   const _push = new THREE.Vector3();
   const _probe = new THREE.Vector3();
+  const _flow = { x: 0, z: 0 };
 
   function loop() {
     requestAnimationFrame(loop);
     const rawDt = clock.getDelta();
+    // 自动化长测接管时钟：浏览器帧只画面，不推进世界（否则两边都在推进，结果不可复现）
+    if (game.manualClock) { renderer.render(); return; }
+    tick(rawDt);
+  }
+
+  /**
+   * 推进一帧（主循环与自动化测试共用：长测按固定 dt 一帧一帧地调用，结果可复现）。
+   * @param {number} rawDt 真实帧间隔（秒）
+   * @param {{ render?: boolean }} opts render: false 时跳过渲染（长测只验证模拟）
+   */
+  function tick(rawDt, opts = {}) {
     const dt = Math.min(rawDt, 0.1);
     elapsed += dt;
-    const playing = state.mode === "play";
+    // 本帧的系统调度（core/schedule.js）：暂停 / 设置时世界静止，死亡时不存档，开场镜头时不接受操作
+    const S = scheduleFor(state.mode, cinematic.active);
+    const playing = S.input;
 
     // 昼夜
-    const st = daynight.update(dt);
+    const st = daynight.update(S.clock ? dt : 0);
     renderer.setSunDir(st.lightDir);
     renderer.applyDayNight(st, sky);
 
-    // 死亡 / 菜单中：不接受移动输入
-    if (!playing) player.keys.clear();
-    interaction.enabled = playing && !mount.active && !health.dead;
+    // 不接受操作时清掉按住的键（否则回到游戏时角色会自己走）
+    if (!S.input) { player.keys.clear(); mouseHeld.left = false; }
+    // 挖 / 放只在建造模式（冒险模式的左键是出招）
+    interaction.enabled = S.input && !mount.active && !health.dead && game.mode === "build";
+    if (S.input && mouseHeld.left && game.mode === "adventure" && !mount.active && player.locked) skills.use("slash");
 
-    // 玩家
+    if (S.sim) {
+    // 流水推人：泡在流动的水里会被水流带着走
+    if (player.inWater && !player.flying) {
+      const f = physics.flowAt(Math.floor(player.position.x), Math.floor(player.position.y + 0.1), Math.floor(player.position.z), _flow);
+      player.velocity.x += f.x * 9 * dt;
+      player.velocity.z += f.z * 9 * dt;
+    }
+
+    // 玩家（技能先于物理：突刺 / 闪避设置的强制位移本帧就生效）
+    skills.update(dt);
     player.update(dt);
 
     // 玩家与假人的碰撞：圆柱推开（假人不是方块，不在体素碰撞里）
@@ -800,6 +896,7 @@ async function boot() {
 
     // 坐骑（骑乘时负责化身落座；离场动画、火球、残云在未骑乘时也要继续）
     mount.update(dt);
+    }
 
     // 化身：姿势由状态驱动
     if (player.mode !== "debug") avatar.setMode(player.mode);
@@ -822,18 +919,21 @@ async function boot() {
     });
 
     // 游戏系统
-    if (playing || state.mode === "inventory") {
+    if (S.sim) {
       health.update(dt, player);
       state.playTime += dt;
+      combat.update(dt);
+      physics.update(dt);
+      drops.update(dt, player, inventory);
+      torches.update(dt, player.position);
     }
-    combat.update(dt);
-    drops.update(dt, player, inventory);
-    torches.update(dt, player.position);
-    save.update(dt);
+    debrisFx.mat.uniforms.uLight.value = 0.35 + 0.65 * (1 - st.night);
+    debrisFx.update(S.sim ? dt : 0);
+    if (S.save && !health.dead) save.update(dt);
 
     // 区块流式加载
     chunks.update(player.position);
-    chunks.processDirty(2);
+    chunks.processDirty(12, 6);
     if ((frameCount % 15) === 0) hud.setChunkProgress(chunks.queue.length);
     // 距离剔除（每 6 帧一次，降低开销）
     if ((frameCount++ % 6) === 0) chunks.cull(player.position);
@@ -859,6 +959,17 @@ async function boot() {
     // 交互高亮 + 攻击冷却
     interaction.update(dt);
 
+    // 开场 cinematic 巡游镜头；标题页时镜头在高空缓慢环绕主城。
+    // 必须在天空、水下判定、居民气泡投影之前：它们都要用「这一帧最终的相机」
+    if (cinematic.active) updateCinematic(dt);
+    else if (state.mode === "title") {
+      const a = elapsed * 0.045;
+      renderer.camera.position.set(Math.sin(a) * 150, 108, Math.cos(a) * 150 - 10);
+      renderer.camera.lookAt(0, 52, -14);
+      renderer.camera.fov = 58;
+      renderer.camera.updateProjectionMatrix();
+    }
+
     // 天空跟随 / 水面
     sky.update(renderer.camera, elapsed);
     renderer.tick(elapsed);
@@ -869,7 +980,7 @@ async function boot() {
     audio.update(dt, st.night, player.headUnderwater);
 
     // 居民
-    npcs.update(dt, player.position, { camera: renderer.camera, night: st.night, mounted: mount.active });
+    npcs.update(S.npcs ? dt : 0, player.position, { camera: renderer.camera, night: st.night, mounted: mount.active });
 
     // 环境粒子与特效
     // 不受光照的粒子（花瓣、香烟）跟着昼夜变暗：夜里只剩微光，不会满屏发亮
@@ -883,7 +994,7 @@ async function boot() {
     mist.update(elapsed, renderer.camera, st.night);
     skyLanterns.update(elapsed, player.position, st.night);
     waterMotes.update(elapsed, renderer.camera, renderer.underwaterBlend);
-    fx.update(dt);
+    fx.update(S.sim ? dt : 0);
 
     // 固定机位（截图 / 验收）不显示第一人称视模型
     if (debugShot) avatar.viewArms.visible = false;
@@ -891,19 +1002,11 @@ async function boot() {
     document.body.classList.toggle("in-title", state.mode === "title");
     if (state.mode === "title") avatar.viewArms.visible = false;
 
-    // 开场 cinematic 巡游镜头；标题页时镜头在高空缓慢环绕主城
-    if (cinematic.active) updateCinematic(dt);
-    else if (state.mode === "title") {
-      const a = elapsed * 0.045;
-      renderer.camera.position.set(Math.sin(a) * 150, 108, Math.cos(a) * 150 - 10);
-      renderer.camera.lookAt(0, 52, -14);
-      renderer.camera.fov = 58;
-      renderer.camera.updateProjectionMatrix();
-    }
-
     // 渲染
-    renderer.updateSunScreen();
-    renderer.render();
+    if (opts.render !== false) {
+      renderer.updateSunScreen();
+      renderer.render();
+    }
 
     // 统计
     fpsAcc += dt;
@@ -921,7 +1024,7 @@ async function boot() {
     rpgHud.update(dt);
     touch?.update(playing);
     settingsUI.update(fps);
-    governor.update(rawDt, state.mode === "play" || state.mode === "title");
+    if (opts.render !== false) governor.update(rawDt, state.mode === "play" || state.mode === "title");
   }
 
   loop();
@@ -962,6 +1065,14 @@ async function boot() {
     events,
     graphics,
     governor,
+    skills,
+    physics,
+    destruction,
+    game,
+    setGameMode,
+    tick,
+    pauseGame: () => pauseGame(),
+    openInventory: () => openInventory(),
     settingsUI,
     touch,
     touchMode,
@@ -1076,6 +1187,10 @@ async function boot() {
     runNpcTests: () => runSuite(NPC_TEST_SOURCE),
     /** 运行基础体验测试（光照 / 阴影 / 画质 / 蹲下疾跑 / 触屏 / 设置窗口 / 自动降档）。 */
     runUxTests: () => runSuite(UX_TEST_SOURCE),
+    /** 运行世界与技能测试（水流 / 方块物理 / 地形破坏 / 人物技能 / 模式）。 */
+    runWorldTests: () => runSuite(WORLD_TEST_SOURCE),
+    /** 长时间随机操作测试：固定种子的随机玩家跑几千帧，每帧检查不变量。 */
+    runSoakTests: () => runSuite(SOAK_TEST_SOURCE),
   };
 
   /**
@@ -1084,11 +1199,35 @@ async function boot() {
    */
   function runSuite(src) {
     const prev = { mode: state.mode, pos: player.position.clone(), yaw: player.yaw, pitch: player.pitch, cam: player.mode };
+    // 测试不能污染世界：记下套件运行期间每一格第一次被改之前的方块与存档差量，结束时原样还原
+    // （否则测试砌的墙、放的方块会进玩家的存档）
+    const original = new Map();
+    const unhook = events.on("world:edit", ({ x, y, z, prev: was }) => {
+      const k = `${x},${y},${z}`;
+      if (!original.has(k)) original.set(k, { was, edit: edits.edits.has(k) ? edits.edits.get(k) : undefined });
+    });
+    const restoreWorld = () => {
+      unhook();
+      if (!original.size) return;
+      physics.pending.clear();
+      const L = world.lighting;
+      L.suspended = true;
+      for (const [k, o] of original) {
+        const [x, y, z] = k.split(",").map(Number);
+        edits.set(x, y, z, o.was); // 走正常编辑路径：火把、导航网格跟着恢复
+        if (o.edit === undefined) edits.edits.delete(k); else edits.edits.set(k, o.edit);
+      }
+      L.suspended = false;
+      L.computeAll();
+      world.markAllDirty();
+      physics.pending.clear();
+    };
     if (mount.active) mount.dismiss();
     state.mode = "test";
     if (health.dead) health.respawn();
     interaction.enabled = true;
     const restore = () => {
+      restoreWorld();
       if (health.dead) health.respawn();
       document.getElementById("death")?.classList.remove("open");
       state.mode = prev.mode === "dead" ? "play" : prev.mode;

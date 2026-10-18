@@ -166,35 +166,33 @@ export class HUD {
   }
 
   /* ---------------- 键盘 ---------------- */
+  // 按键由 core/input.js 的路由统一分发，这里只提供动作；滚轮切换快捷栏仍在这里（不是按键）
+  selectHotbar(i) {
+    this.inventory?.select(i);
+    const def = this.inventory?.selectedItem;
+    if (def) this.showItemName(def.label);
+    this.audio?.uiSelect();
+  }
+
+  toggleHidden() {
+    this.hidden = !this.hidden;
+    this.el.hud.style.display = this.hidden ? "none" : "";
+  }
+
+  toggleDebug() {
+    document.body.classList.toggle("debug");
+  }
+
+  toggleMinimap() {
+    if (!this.minimap) return;
+    this.minimap.visible = !this.minimap.visible;
+    this.el.minimap.style.display = this.minimap.visible ? "" : "none";
+    if (this.minimap.visible) this.minimap.update(true);
+  }
+
   _bindKeys() {
-    window.addEventListener("keydown", (e) => {
-      if (!this.player.engaged) return;
-      const riding = this.mount && this.mount.active;
-      if (e.code.startsWith("Digit") && !riding) {
-        const n = Number(e.code.slice(5));
-        if (n >= 1 && n <= 9) {
-          this.inventory?.select(n - 1);
-          const def = this.inventory?.selectedItem;
-          if (def) this.showItemName(def.label);
-          this.audio?.uiSelect();
-        }
-      }
-      if (e.code === "KeyH") {
-        this.hidden = !this.hidden;
-        this.el.hud.style.display = this.hidden ? "none" : "";
-      }
-      if (e.code === "F3") {
-        e.preventDefault();
-        document.body.classList.toggle("debug");
-      }
-      if (e.code === "KeyM" && this.minimap) {
-        this.minimap.visible = !this.minimap.visible;
-        this.el.minimap.style.display = this.minimap.visible ? "" : "none";
-        if (this.minimap.visible) this.minimap.update(true);
-      }
-    });
     window.addEventListener("wheel", (e) => {
-      if (!this.player.engaged || !this.inventory || (this.mount && this.mount.active)) return;
+      if (!this.player.engaged || !this.inventory || (this.mount && this.mount.active) || this.gameMode !== "build") return;
       this.inventory.select(this.inventory.selected + (e.deltaY > 0 ? 1 : -1));
       const def = this.inventory.selectedItem;
       if (def) this.showItemName(def.label);
@@ -207,14 +205,17 @@ export class HUD {
       this._nameTimer -= dt;
       if (this._nameTimer <= 0) this.el.itemname.classList.remove("show");
     }
-    this.dyn.fps.set(String(stats.fps));
-    const p = this.player.position;
-    this.dyn.pos.set(`${Math.round(p.x)} ${Math.round(p.y)} ${Math.round(p.z)}`);
-    this.dyn.mode.set(
-      (CAMERA_LABELS[this.player.mode] || this.player.mode).toUpperCase() + (this.player.flying ? " / FLY" : ""),
-    );
-    this.dyn.chunk.set(`${stats.chunks} / ${Math.round(stats.tris / 1000)}K`);
-    this.dyn.clock.set(this.daynight.clockText);
+    // 调试面板（F3）不显示时不更新它的文字
+    if (document.body.classList.contains("debug")) {
+      this.dyn.fps.set(String(stats.fps));
+      const p = this.player.position;
+      this.dyn.pos.set(`${Math.round(p.x)} ${Math.round(p.y)} ${Math.round(p.z)}`);
+      this.dyn.mode.set(
+        (CAMERA_LABELS[this.player.mode] || this.player.mode).toUpperCase() + (this.player.flying ? " / FLY" : ""),
+      );
+      this.dyn.chunk.set(`${stats.chunks} / ${Math.round(stats.tris / 1000)}K`);
+      this.dyn.clock.set(this.daynight.clockText);
+    }
     if (this.daynight.playing) this.el.slider.value = String(Math.floor(this.daynight.time));
     if (this.minimap && (this._mmTick = (this._mmTick || 0) + 1) % 10 === 0) this.minimap.update();
   }

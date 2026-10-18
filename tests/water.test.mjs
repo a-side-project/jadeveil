@@ -167,8 +167,8 @@ export const WATER_TEST_SOURCE = `
       run(360);
       const yFloat = player.position.y;
 
-      // Ctrl 下潜
-      player.keys.add("ControlLeft");
+      // C 下潜（Ctrl 不能用：和 W 组合是浏览器的关闭标签页）
+      player.keys.add("KeyC");
       run(150);
       const yDown = player.position.y;
       const headUnder = player.headUnderwater;
@@ -197,7 +197,7 @@ export const WATER_TEST_SOURCE = `
       });
     }
     results.push({
-      test: "Ctrl dives and Space surfaces",
+      test: "C dives and Space surfaces",
       detail,
       pass: detail.every((d) => d.pass),
     });

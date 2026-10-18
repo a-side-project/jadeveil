@@ -394,8 +394,9 @@ export class NPCManager {
           a.progressT = 0;
           a.progressRef.set(a.pos.x, a.pos.z);
         } else {
+          // 寻路失败：守岗的人回到岗位状态（就地站好），不会因此变成到处闲逛的路人
           a.path = null;
-          a.state = "idle";
+          a.state = a.mode === "station" ? "station" : "idle";
           a.timer = 1 + Math.random() * 2;
         }
       }
@@ -470,8 +471,9 @@ export class NPCManager {
         const s = a.station;
         const d = Math.hypot(s.x - a.pos.x, s.z - a.pos.z);
         if (d > 0.6) {
-          // 被推离岗位：走回去（短距离直接走，远了寻路）
-          if (d > 6 && !a.path) { a.dest = { x: s.x, z: s.z }; a.needPath = true; }
+          // 被推离岗位：远了按路径走回去（切到 travel，到了再回岗；旧版算出了路径却从不沿它走，
+          // 路径一直挂着又挡住了下一次寻路，人就卡在墙角），近了直接走
+          if (d > 6) { a.dest = { x: s.x, z: s.z }; a.needPath = true; a.path = null; a.state = "travel"; break; }
           dirX = (s.x - a.pos.x) / d; dirZ = (s.z - a.pos.z) / d; want = a.speed * 0.6;
         } else {
           this._turn(a, s.yaw + Math.sin(performance.now() * 0.0004 + a.id) * 0.5, dt, 2);
@@ -503,7 +505,7 @@ export class NPCManager {
       }
       case "travel": {
         if (!a.path) {
-          if (!a.needPath) { a.state = "idle"; a.timer = 1; }
+          if (!a.needPath) { a.state = a.mode === "station" ? "station" : "idle"; a.timer = 1; }
           break;
         }
         const wp = a.path[a.pathIdx];
@@ -513,7 +515,7 @@ export class NPCManager {
           a.pathIdx++;
           if (a.pathIdx >= a.path.length) {
             a.path = null;
-            a.state = "idle";
+            a.state = a.mode === "station" ? "station" : "idle";
             a.timer = 3 + Math.random() * 7;
           }
           break;
@@ -529,7 +531,7 @@ export class NPCManager {
           if (moved < 0.4) {
             a.fails++;
             a.path = null;
-            if (a.fails >= 3) { a.state = "idle"; a.timer = 2 + Math.random() * 2; a.fails = 0; } else a.needPath = true;
+            if (a.fails >= 3) { a.state = a.mode === "station" ? "station" : "idle"; a.timer = 2 + Math.random() * 2; a.fails = 0; } else a.needPath = true;
           }
         }
         break;
@@ -570,8 +572,10 @@ export class NPCManager {
     }
 
     // ---- 安全网：若脚下已不可走（玩家刚在这里挖坑 / 放了水），就近挪到可走格 ----
-    if (!nav.bodyFits(a.pos.x, a.pos.z, BODY_R * 0.6)) {
-      const p = nav.nearestWalkable(a.pos.x, a.pos.z, 10);
+    // 与验收标准（stats.inWall 用完整身体半径）一致：旧版这里只查 0.6 倍半径，离墙 0.25~0.42 的人既算「在墙里」又不会被挪开
+    if (!nav.bodyFits(a.pos.x, a.pos.z, BODY_R)) {
+      // 优先挪到主城连通区域里（不被「传送」进封闭区域）；墙把路切断时退而求其次，任何可走格都行
+      const p = nav.nearestWalkable(a.pos.x, a.pos.z, 10, nav.mainComp) || nav.nearestWalkable(a.pos.x, a.pos.z, 10);
       if (p) { a.pos.x = p.x; a.pos.z = p.z; a.path = null; a.needPath = !!a.dest; }
     }
 

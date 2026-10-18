@@ -4,7 +4,7 @@
  * 布局（世界坐标，主城中心在原点）：
  *   · 中轴大道沿 Z 轴，自南（+Z）向北（-Z）延伸
  *   · 南端：石狮牌坊 → 灯笼长街 → 中央水池（荷花）→ 主殿（重檐金瓦）
- *   · 东西两侧：配殿、宝塔、竹林、云雾仙山浮岛
+ *   · 东西两侧：坊市、宝塔、竹林、云雾仙山浮岛
  */
 import { ID, BEDROCK_TOP } from "./blocks.js";
 import { VoxelWorld, CH } from "./voxelWorld.js";
@@ -138,26 +138,37 @@ export class WorldGenerator {
       for (let z = -R; z <= R; z++) {
         const d = Math.hypot(x, z);
         if (d < CITY.plazaRadius + 4) continue;
-        const h = this.heightAt(x, z);
-        const biome = this.biomeAt(x, z, h);
+        // 宫墙以内是整平过的台地：地表在地坪上，按低地林（竹林为主）长；墙外按天然地形
+        const terrace = this.insideWall(x, z, 2);
+        const nh = terrace ? CITY.baseY : this.heightAt(x, z);
+        const biome = terrace ? 0 : this.biomeAt(x, z, nh);
         if (biome === 3) continue;
+        // 植被种在「现在」的地表上，而不是天然地形高度上：植被在所有建筑之后才撒，
+        // 主城台地底下原本是草地 —— 按天然高度种，树干会从地下穿过主殿地面、树冠塞满殿内
+        // （曾经的 1550 块松针：看不见的空气墙 + 闪烁）。
+        const h = w.groundHeight(x, z);
+        if (h < nh - 1 || h > Math.max(nh, CITY.baseY) + 1) continue; // 头顶是浮岛 / 建筑：不是地表
         const top = w.get(x, h, z);
         if (top !== ID.grass && top !== ID.moss_stone) continue;
+        if (w.get(x, h + 1, z) !== ID.air) continue;
+        // 紧贴结构的一格不种（留出走动的缝）；树冠、竹丛的每一格由 _avoidFootprint 把关，
+        // 整棵作为一件放置 —— 有一格会伸进结构就整棵不种（旧版一刀切留 4 格，城里只剩两成空地能长树）
+        if (this.claimed(x, z, 1)) continue;
 
         const r = hash2i(x, z, this.seed + 555);
         const bambooDensity = smoothstep(120, 40, d) * 0.5 + 0.12;
 
         if (biome === 2) {
-          if (r < 0.035) this.pineTree(x, h + 1, z);
+          if (r < 0.035) this._item(() => this.pineTree(x, h + 1, z));
           else if (r < 0.06) w.set(x, h + 1, z, ID.grass_tuft);
         } else if (biome === 1) {
-          if (r < 0.05) this.pineTree(x, h + 1, z);
+          if (r < 0.05) this._item(() => this.pineTree(x, h + 1, z));
           else if (r < 0.16) this.bambooCluster(x, h + 1, z);
           else if (r < 0.22) w.set(x, h + 1, z, ID.grass_tuft);
           else if (r < 0.25) w.set(x, h + 1, z, ID.flower_yellow);
         } else {
           if (r < bambooDensity * 0.22) this.bambooCluster(x, h + 1, z);
-          else if (r < bambooDensity * 0.3) this.pineTree(x, h + 1, z);
+          else if (r < bambooDensity * 0.3) this._item(() => this.pineTree(x, h + 1, z));
           else if (r < 0.3) w.set(x, h + 1, z, ID.grass_tuft);
           else if (r < 0.34) w.set(x, h + 1, z, ID.flower_red);
           else if (r < 0.37) w.set(x, h + 1, z, ID.flower_yellow);
@@ -175,7 +186,16 @@ export class WorldGenerator {
       const oz = z + ((hash2i(x, z + i, 7) * 5) | 0) - 2;
       const base = w.groundHeight(ox, oz);
       if (base < 0) continue;
+      // 竹子只长在土地上（groundHeight 取的是最高的不透明方块 —— 可能是屋顶、墙头），且整根竹竿的位置必须是空的
+      const soil = w.get(ox, base, oz);
+      if (soil !== ID.grass && soil !== ID.moss_stone && soil !== ID.dirt) continue;
+      if (Math.abs(base - (y - 1)) > 2) continue;
+      // 竹竿不能立在结构占地的列里（贴墙一格也不行）；竹叶伸进占地的那几片由 _avoidFootprint 逐片剪掉
+      if (this.claimed(ox, oz, 1)) continue;
       const hgt = 9 + ((hash2i(ox, oz, 13) * 9) | 0);
+      let clear = true;
+      for (let k = 1; k <= hgt && clear; k++) if (w.get(ox, base + k, oz) !== ID.air) clear = false;
+      if (!clear) continue;
       for (let k = 1; k <= hgt; k++) {
         if (base + k >= CH) break;
         w.set(ox, base + k, oz, ID.bamboo);
@@ -199,6 +219,8 @@ export class WorldGenerator {
   pineTree(x, y, z) {
     const w = this.world;
     const hgt = 8 + ((hash2i(x, z, 31) * 7) | 0);
+    // 树干所在的整列（含树冠高度）必须是空的：不会长进建筑、屋檐、浮岛里
+    for (let k = 0; k <= hgt + 1; k++) if (w.get(x, y + k, z) !== ID.air) return;
     for (let k = 0; k < hgt; k++) {
       if (y + k >= CH) break;
       w.set(x, y + k, z, ID.wood_beam);
@@ -234,25 +256,32 @@ export class WorldGenerator {
     const Z_MIN = -118;
     const Z_MAX = 118;
 
-    const flattenAt = (x, z) => {
+    // 台地以上整列清空，而不是只清到天然地形高度：
+    // 台地比原地形高的地方（原来是山谷），山谷里长出来的松树、竹林会把树冠留在台地上方，
+    // 之后的建筑直接盖在这些树冠上 —— 主殿里曾藏着 1550 块松针（看不见的「空气墙」+ 闪烁）。
+    // 这一步在浮岛、云、宝塔之前执行，此时台地上方只有地形和植被。
+    // surface：广场、中轴走廊铺石板；宫墙内其余空地是草地（坊间的竹林、松林、花草长在这里 ——
+    // 整片铺成石板时城里一棵树都长不出来，整座城只剩光秃秃的建筑）
+    const flattenAt = (x, z, surface = ID.slate) => {
       const h = this.heightAt(x, z);
-      for (let y = CITY.baseY + 1; y <= h; y++) w.set(x, y, z, ID.air);
-      for (let y = h + 1; y <= CITY.baseY; y++) w.set(x, y, z, ID.dirt);
-      w.set(x, CITY.baseY, z, ID.slate);
+      for (let y = CITY.baseY + 1; y < CH; y++) if (w.get(x, y, z) !== ID.air) w.set(x, y, z, ID.air);
+      for (let y = h + 1; y < CITY.baseY; y++) w.set(x, y, z, ID.dirt);
+      w.set(x, CITY.baseY, z, surface);
     };
+    const paved = (x, z) => Math.hypot(x, z) <= R || Math.abs(x) <= CORRIDOR_HALF;
 
-    // 1) 主城圆形台地
-    for (let x = -R; x <= R; x++) {
-      for (let z = -R; z <= R; z++) {
-        if (Math.hypot(x, z) > R) continue;
-        flattenAt(x, z);
-      }
+    // 1) 宫墙以内整片台地（外扩 2 格给墙基）：坊市、宝塔、宫墙都落在同一个地坪上。
+    //    旧版只整平中央圆形广场 + 中轴走廊，两侧的坊市和宫墙坐在起伏的天然地形上 ——
+    //    有的悬空、有的埋进山里（审计：3368 列悬空）
+    const wl = CITY_PLAN.wall;
+    for (let x = -wl.halfX - 2; x <= wl.halfX + 2; x++) {
+      for (let z = wl.north - 2; z <= wl.south + 2; z++) flattenAt(x, z, paved(x, z) ? ID.slate : ID.grass);
     }
-
-    // 2) 中轴大道走廊（南接城门，北连宝塔）
-    for (let x = -CORRIDOR_HALF; x <= CORRIDOR_HALF; x++) {
+    // 2) 中央圆形广场与中轴大道走廊在墙外延伸的部分（南出城门、北连远山）
+    for (let x = -Math.max(R, CORRIDOR_HALF); x <= Math.max(R, CORRIDOR_HALF); x++) {
       for (let z = Z_MIN; z <= Z_MAX; z++) {
-        if (Math.hypot(x, z) <= R) continue; // 已由台地处理
+        if (Math.abs(x) <= wl.halfX + 2 && z >= wl.north - 2 && z <= wl.south + 2) continue; // 已整平
+        if (Math.abs(x) > CORRIDOR_HALF && Math.hypot(x, z) > R) continue;
         flattenAt(x, z);
       }
     }
@@ -281,14 +310,23 @@ export class WorldGenerator {
     return this;
   }
 
-  /** 灯笼长街：大道两侧成对的宫灯。 */
+  /**
+   * 灯笼长街：大道两侧成对的宫灯，从主殿前（avenueEnd）一路排向南端城门。
+   *
+   * 旧版写成 z -= 9、从 avenueEnd 往北排 —— 方向反了，十几对灯柱排进了主殿和殿后，
+   * 殿里的 12 盏灯笼、6 根挑杆就是这么来的。现在在所有建筑之后生成，
+   * 并且只在整根灯柱的位置都是空的时候才立（水池、桥、牌坊、城门处自动跳过）。
+   */
   buildLanternStreet() {
     const w = this.world;
     const hw = CITY.avenueHalfWidth;
-    for (let z = CITY.avenueEnd - 6; z >= CITY.avenueEnd - 78; z -= 9) {
+    for (let z = CITY.avenueEnd + 6; z <= CITY.avenueStart - 6; z += 9) {
       for (const sx of [-1, 1]) {
         const x = sx * (hw + 3);
         const base = CITY.baseY;
+        let clear = w.solidAt(x, base, z) && !w.liquidAt(x, base, z);
+        for (let k = 1; k <= 9 && clear; k++) if (w.get(x, base + k, z) !== ID.air) clear = false;
+        if (!clear) continue;
         // 灯柱
         for (let k = 1; k <= 4; k++) w.set(x, base + k, z, ID.pillar_red);
         w.set(x, base + 5, z, ID.wood_beam);
@@ -358,6 +396,7 @@ export class WorldGenerator {
   /** 通用：一段朱红宫墙（带金瓦压顶）。 */
   wallSegment(x0, z0, x1, z1, height = 6, opts = {}) {
     const w = this.world;
+    // gate：[xFrom, xTo]（世界坐标）这一段不砌墙（城门洞）
     const { base = CITY.baseY, gate = null, crenel = true } = opts;
     const dx = Math.sign(x1 - x0);
     const dz = Math.sign(z1 - z0);
@@ -365,7 +404,11 @@ export class WorldGenerator {
     for (let i = 0; i <= len; i++) {
       const x = x0 + dx * i;
       const z = z0 + dz * i;
-      if (gate && i >= gate[0] && i <= gate[1]) continue;
+      if (gate && x >= gate[0] && x <= gate[1]) continue;
+      // 墙线上已经有别的结构（城门、登岛石阶）：这里留出缺口，不把它们砌进墙里
+      if (this._ownedByOther(x, z, base + 1, base + height + 2)) continue;
+      // 墙基：一直砌到实心地面，不悬空
+      for (let y = base; y > 0 && !w.solidAt(x, y, z); y--) w.set(x, y, z, ID.wall_base);
       for (let k = 1; k <= height; k++) {
         w.set(x, base + k, z, k === 1 ? ID.wall_base : ID.wall_red);
       }
@@ -382,8 +425,10 @@ export class WorldGenerator {
     const base = CITY.baseY;
 
     // 台基（三层）
+    // 三层台基逐层收进（最底层最宽）：旧版 ex = layer * 2 把台基上下颠倒了 ——
+    // 顶层最宽，悬在下面两层之外，台阶走不上去，殿内与城里的导航网格不连通
     for (let layer = 0; layer < 3; layer++) {
-      const ex = layer * 2;
+      const ex = (2 - layer) * 2;
       const y = base + 1 + layer;
       for (let x = cx - w0 - ex; x <= cx + w0 + ex; x++) {
         for (let z = cz - d0 - ex; z <= cz + d0 + ex; z++) {
@@ -391,7 +436,9 @@ export class WorldGenerator {
         }
       }
     }
-    const floorY = base + 3;
+    // 三层台基占 base+1..base+3，殿内地面是台基顶层（金砖），人站在 base+4。
+    // 旧版 floorY = base+3 —— 墙的第一层嵌进台基、殿内金砖被埋在汉白玉下面看不见。
+    const floorY = base + 4;
 
     // 殿身：朱红墙 + 立柱
     const wallH = 9;
@@ -435,8 +482,9 @@ export class WorldGenerator {
       }
     }
 
-    // 下层重檐
-    this.buildRoof(cx, cz, w0 + 3, d0 + 3, floorY + wallH, { style: "gold", upturn: 3 });
+    // 下层重檐：一圈 4 层的裙檐（收进到墙线以内，顶面就是上层殿身的地面）。
+    // 旧版铺成一座实心的金字塔，把上层殿身整个埋在里面
+    this.buildRoof(cx, cz, w0 + 3, d0 + 3, floorY + wallH, { style: "gold", upturn: 3, maxLayers: 4 });
     // 上层殿身（收进）
     const w1 = w0 - 5;
     const d1 = d0 - 4;
@@ -470,14 +518,18 @@ export class WorldGenerator {
    * 屋顶：四坡顶 + 飞檐起翘。
    * 逐层向内收进，边缘用 roof_eave，四角用 roof_corner 做出起翘。
    */
-  buildRoof(cx, cz, hw, hd, y0, { style = "gold", upturn = 3 } = {}) {
+  /**
+   * maxLayers：只铺这么多层（重檐的下层只是一圈裙檐，上层殿身立在它上面）；默认铺到屋脊
+   */
+  buildRoof(cx, cz, hw, hd, y0, { style = "gold", upturn = 3, maxLayers = Infinity } = {}) {
     const w = this.world;
     const eave = style === "gold" ? ID.roof_eave : ID.roof_ink_eave;
     const tile = style === "gold" ? ID.roof_gold : ID.roof_ink;
     const ridge = style === "gold" ? ID.roof_gold_ridge : ID.roof_ink;
     const corner = style === "gold" ? ID.roof_corner : ID.roof_ink;
 
-    const layers = Math.min(hw, hd);
+    const fullLayers = Math.min(hw, hd);
+    const layers = Math.min(fullLayers, maxLayers);
     for (let l = 0; l < layers; l++) {
       const y = y0 + l;
       const ex = hw - l;
@@ -488,15 +540,16 @@ export class WorldGenerator {
           const onX = x === cx - ex || x === cx + ex;
           const onZ = z === cz - ez || z === cz + ez;
           if (!onX && !onZ) {
-            // 内部填实，避免屋顶漏空
-            if (l > 0) w.set(x, y, z, tile);
+            // 内部填实，避免屋顶漏空。第一层也要填：旧版只填 l > 0，
+            // 墙顶与第二层之间留下一整圈 1 格高的缝，天光从檐下漏进殿里、屋顶看起来悬在墙上
+            w.set(x, y, z, tile);
             continue;
           }
           const isCorner = onX && onZ;
           let id = tile;
           if (isCorner) id = corner;
           else if (l === 0) id = eave;
-          else if (l === layers - 1) id = ridge;
+          else if (l === fullLayers - 1) id = ridge;
           w.set(x, y, z, id);
         }
       }
@@ -524,35 +577,6 @@ export class WorldGenerator {
         w.set(cx + ex, y, z, eave);
       }
     }
-    return this;
-  }
-
-  /** 配殿（东西厢房），墨瓦顶。 */
-  buildSideHall(cx, cz, hw = 8, hd = 6) {
-    const w = this.world;
-    const base = CITY.baseY;
-    for (let x = cx - hw - 1; x <= cx + hw + 1; x++) {
-      for (let z = cz - hd - 1; z <= cz + hd + 1; z++) {
-        w.set(x, base + 1, z, ID.marble);
-      }
-    }
-    const floorY = base + 2;
-    for (let x = cx - hw; x <= cx + hw; x++) {
-      for (let z = cz - hd; z <= cz + hd; z++) {
-        const onEdge = x === cx - hw || x === cx + hw || z === cz - hd || z === cz + hd;
-        if (!onEdge) continue;
-        for (let k = 0; k < 6; k++) w.set(x, floorY + k, z, ID.wall_red);
-      }
-    }
-    for (const px of [cx - hw, cx + hw]) {
-      for (const pz of [cz - hd, cz + hd]) {
-        for (let k = 0; k < 6; k++) w.set(px, floorY + k, pz, ID.pillar_red);
-      }
-    }
-    for (let x = cx - hw; x <= cx + hw; x++) {
-      for (const pz of [cz - hd, cz + hd]) w.set(x, floorY + 5, pz, ID.beam_painted);
-    }
-    this.buildRoof(cx, cz, hw + 2, hd + 2, floorY + 6, { style: "ink", upturn: 2 });
     return this;
   }
 
@@ -696,6 +720,8 @@ export class WorldGenerator {
           if (d > 1) continue;
           const n = valueNoise2(x * 0.12, z * 0.12, this.seed + 300);
           if (n + (1 - d) * 0.6 < 0.62) continue;
+          // 不贴着任何结构（石阶上方的云会挡住登岛的人、塔身上会长出云团）
+          if (this.claimed(x, z, 2)) continue;
           w.setIfAir(x, cy, z, ID.cloud);
           if (n > 0.78) w.setIfAir(x, cy + 1, z, ID.cloud);
         }
@@ -908,18 +934,23 @@ export class WorldGenerator {
         w.set(x, y + bodyH - 1, cz - r, ID.beam_painted);
         w.set(x, y + bodyH - 1, cz + r, ID.beam_painted);
       }
-      w.set(cx, y + Math.floor(bodyH / 2), cz, ID.glow);
-      this.landmarks.push({ type: "lantern", pos: [cx, y + Math.floor(bodyH / 2), cz] });
+      // 塔心长明灯立在灯柱上（旧版悬在空心塔身的半空）
+      const lampY = y + Math.floor(bodyH / 2);
+      for (let k = y; k < lampY; k++) w.set(cx, k, cz, ID.pillar_red);
+      w.set(cx, lampY, cz, ID.glow);
+      this.landmarks.push({ type: "lantern", pos: [cx, lampY, cz] });
 
       // 层层外挑的屋檐
       this.buildRoof(cx, cz, r + 3, r + 3, y + bodyH, { style: "gold", upturn: 3 });
 
       for (const sx of [-1, 1]) {
         for (const sz of [-1, 1]) {
+          // 檐角挂灯：挂在檐角正下方、贴着屋檐（旧版放在屋檐上方 4 格，悬空）
           const lx = cx + sx * (r + 3);
           const lz = cz + sz * (r + 3);
-          w.set(lx, y + bodyH + 4, lz, ID.lantern);
-          this.landmarks.push({ type: "lantern", pos: [lx, y + bodyH + 4, lz] });
+          w.set(lx, y + bodyH - 1, lz, ID.lantern);
+          w.set(lx, y + bodyH - 2, lz, ID.lantern_tassel);
+          this.landmarks.push({ type: "lantern", pos: [lx, y + bodyH - 1, lz] });
         }
       }
       y += bodyH + 4;
@@ -929,6 +960,7 @@ export class WorldGenerator {
     for (let k = 0; k < 7; k++) w.set(cx, y + k, cz, ID.gold_brick);
     w.set(cx, y + 7, cz, ID.glow);
     this.landmarks.push({ type: "lantern", pos: [cx, y + 7, cz] });
+    w.set(cx, y + 8, cz, ID.gold_brick); // 宝顶连成一体（旧版这里空着，最顶上的灯悬空）
     w.set(cx, y + 9, cz, ID.glow);
     this.landmarks.push({ type: "lantern", pos: [cx, y + 9, cz] });
     this.landmarks.push({ type: "grandpagoda", pos: [cx, y + 7, cz] });
@@ -976,7 +1008,9 @@ export class WorldGenerator {
       const dist = 96 + hash2i(i, 23, s + 502) * 72;
       const cx = Math.round(Math.cos(a) * dist);
       const cz = Math.round(Math.sin(a) * dist);
-      // 低于城台地坪（34），只填山谷，不挡城
+      // 略高于城台地坪（38..46）：从城上俯瞰，城外是一圈云海（「云上之城」）。
+      // 宫墙以内一律不放（旧版没有这条，后苑、通天宝塔一楼、城门外大道里塞满了实心的云）；
+      // 压到地坪以下也不行 —— 城外那个高度是海面以下，云海整片消失
       const cy = 38 + Math.round(hash2i(i, 27, s + 503) * 8);
       const rx = 7 + Math.round(hash2i(i, 29, s + 504) * 11);
       const rz = 7 + Math.round(hash2i(i, 31, s + 505) * 11);
@@ -986,6 +1020,7 @@ export class WorldGenerator {
           if (d > 1) continue;
           const n = valueNoise2(x * 0.09, z * 0.09, s + 506);
           if (n + (1 - d) * 0.7 < 0.6) continue;
+          if (this.insideWall(x, z, 6) || this.claimed(x, z, 2)) continue;
           w.setIfAir(x, cy, z, ID.cloud);
           if (n > 0.72) w.setIfAir(x, cy + 1, z, ID.cloud);
         }
@@ -994,80 +1029,195 @@ export class WorldGenerator {
     return this;
   }
 
+  /** (x, z) 是否在宫墙矩形以内（含外扩 margin 格）。 */
+  insideWall(x, z, margin = 0) {
+    const wl = CITY_PLAN.wall;
+    return Math.abs(x) <= wl.halfX + margin && z >= wl.north - margin && z <= wl.south + margin;
+  }
+
+  /* ================= 占地登记 ================= */
+
+  /**
+   * 结构占地登记：生成期间每一次写入都记在「当前正在建的结构」名下。
+   *
+   *   · 冲突：一个结构把另一个结构已经放好的方块（地坪以上）改成了别的东西 —— 记进 this.conflicts，
+   *     由审计（scripts/audit-world.mjs）报告；旧版主殿里的灯柱、拴马桩打穿牌坊柱子都是这一类
+   *   · 占地：所有结构在地坪以上写过的列记进 this.footprint；之后撒的植被、云海、灯柱查它，绝不侵入
+   *
+   * 这套机制对以后新加的任何结构自动生效，不需要每个生成函数自己维护边界。
+   */
+  _beginClaims() {
+    const w = this.world;
+    const R = 200, S = R * 2 + 1;
+    this._fpR = R;
+    this.footprint = new Uint8Array(S * S);
+    this.conflicts = new Map(); // "a ← b" → 次数
+    this._cellOwner = new Map();
+    this._owner = null;
+    const base = CITY.baseY;
+    // 返回 false = 这次写入被拒绝（让位）：装饰性结构（摊位、灯柱）不能改掉别的结构已经放好的方块
+    const rec = (x, y, z, id) => {
+      const owner = this._owner;
+      // 自然植被（无主）：不许把任何一格写进结构占地的列（树冠伸进屋檐、竹子长进殿里）。
+      // 在 _item 里（松树）被拒绝 = 整棵不种；不在 _item 里（竹叶）= 只剪掉这一片
+      if (this._avoidFootprint && y > base && Math.abs(x) <= R && Math.abs(z) <= R && this.footprint[(z + R) * S + (x + R)]) return false;
+      if (!owner || y <= base) return true;
+      const k = (x + 512) * 1048576 + (z + 512) * 256 + y;
+      const prev = this._cellOwner.get(k);
+      const cur = w.get(x, y, z);
+      if (prev && prev !== owner && cur !== ID.air && cur !== id && this._yield) return false;
+      if (prev && prev !== owner && cur !== ID.air && cur !== id) {
+        const pair = `${prev} <- ${owner}`;
+        this.conflicts.set(pair, (this.conflicts.get(pair) || 0) + 1);
+        if ((this.conflictSamples ||= []).length < 40) this.conflictSamples.push(`${pair} @${x},${y},${z}`);
+      }
+      if (id === ID.air) this._cellOwner.delete(k);
+      else {
+        this._cellOwner.set(k, owner);
+        if (Math.abs(x) <= R && Math.abs(z) <= R) this.footprint[(z + R) * S + (x + R)] = 1;
+      }
+      return true;
+    };
+    const set = w.set.bind(w), setRaw = w.setRaw.bind(w);
+    // 事务（_item）：记下每次写入前的状态，被拒绝时整件撤回
+    const wrap = (raw) => (x, y, z, id) => {
+      const tx = this._tx;
+      if (tx) {
+        const k = (x + 512) * 1048576 + (z + 512) * 256 + y;
+        tx.log.push([x, y, z, w.get(x, y, z), this._cellOwner.get(k)]);
+      }
+      if (rec(x, y, z, id)) raw(x, y, z, id);
+      else if (tx) tx.failed = true;
+    };
+    w.set = wrap(set);
+    w.setRaw = wrap(setRaw);
+    this._rawSet = set;
+    this._restoreWorld = () => { delete w.set; delete w.setRaw; };
+  }
+
+  /**
+   * 以结构名 name 执行一段生成代码（写入都登记在它名下）。
+   * opts.yield：装饰性结构 —— 遇到别的结构已有的方块就让开，不覆盖
+   */
+  _as(name, fn, opts = {}) {
+    const prev = this._owner, prevYield = this._yield;
+    this._owner = name;
+    this._yield = !!opts.yield;
+    try { fn(); } finally { this._owner = prev; this._yield = prevYield; }
+  }
+
+  /**
+   * 整件放置一个装饰（一个摊位、一盏石灯、一座小亭）：只要其中任何一格被拒绝（让位），
+   * 整件撤回 —— 不会留下半截柱子、悬空的屋顶。返回是否放成功。
+   */
+  _item(fn) {
+    if (!this._cellOwner) { fn(); return true; }
+    const outer = this._tx;
+    const tx = { log: [], failed: false };
+    this._tx = tx;
+    let landmarks = this.landmarks.length;
+    try { fn(); } finally { this._tx = outer; }
+    if (!tx.failed) {
+      if (outer) outer.log.push(...tx.log);
+      return true;
+    }
+    for (let i = tx.log.length - 1; i >= 0; i--) {
+      const [x, y, z, prev, owner] = tx.log[i];
+      this._rawSet(x, y, z, prev);
+      const k = (x + 512) * 1048576 + (z + 512) * 256 + y;
+      if (owner) this._cellOwner.set(k, owner); else this._cellOwner.delete(k);
+    }
+    this.landmarks.length = landmarks; // 撤回这件装饰登记的灯笼等地标
+    return false;
+  }
+
+  /** (x, z) 这一列在 y0..y1 之间有没有属于别的结构的方块。 */
+  _ownedByOther(x, z, y0, y1) {
+    if (!this._cellOwner) return false;
+    for (let y = y0; y <= y1; y++) {
+      const o = this._cellOwner.get((x + 512) * 1048576 + (z + 512) * 256 + y);
+      if (o && o !== this._owner) return true;
+    }
+    return false;
+  }
+
+  /** (x, z) 周围 margin 格内是否有结构占地。 */
+  claimed(x, z, margin = 0) {
+    if (!this.footprint) return false;
+    const R = this._fpR, S = R * 2 + 1;
+    for (let dx = -margin; dx <= margin; dx++) for (let dz = -margin; dz <= margin; dz++) {
+      const xx = x + dx, zz = z + dz;
+      if (Math.abs(xx) > R || Math.abs(zz) > R) continue;
+      if (this.footprint[(zz + R) * S + (xx + R)]) return true;
+    }
+    return false;
+  }
+
   /* ================= 总装 ================= */
 
   generate() {
-    // 1. 先铺世界底基岩（先于一切其他生成）
+    this._beginClaims();
+    // ---- 地形 ----
     this.buildBedrock();
     this.generateTerrain();
-    // 远景山峦：在生成半径外缘堆山，制造纵深
-    this.buildFarMountains();
-    this.flattenCity();
+    this.buildFarMountains(); // 远景山峦：在生成半径外缘堆山，制造纵深
+    this.flattenCity(); // 整个宫墙以内整平：所有建筑落在同一个地坪上，不悬空、不埋进山里
     this.buildAvenue();
-    this.buildPond();
-    this.buildLanternStreet();
+    this._as("pond", () => this.buildPond());
+    this._as("rear-garden", () => this.buildRearGardenGround());
 
-    // ---- 按规划布局建造（非随机散布） ----
-
-    // 1. 南城门（中轴起点）
-    this.buildCityGate(CITY_PLAN.gate.z);
-
-    // 2. 牌坊
-    this.buildArchway(0, CITY_PLAN.archway.z);
-
-    // 3. 主殿（中轴终点）
-    this.buildMainHall(0, CITY_PLAN.hall.z, CITY_PLAN.hall.halfW, CITY_PLAN.hall.halfD);
-
-    // 4. 坊市街区（东西对称，高度错落）
+    // ---- 主体建筑（按规划布局，非随机散布） ----
+    this._as("gate", () => this.buildCityGate(CITY_PLAN.gate.z));
+    this._as("archway", () => this.buildArchway(0, CITY_PLAN.archway.z));
+    this._as("hall", () => this.buildMainHall(0, CITY_PLAN.hall.z, CITY_PLAN.hall.halfW, CITY_PLAN.hall.halfD));
     for (const b of CITY_PLAN.blocks) {
-      this.buildShopBlock(b.x, b.z, b.w, b.d, b.h, b.roof);
+      this._as(`shop@${b.x},${b.z}`, () => this.buildShopBlock(b.x, b.z, b.w, b.d, b.h, b.roof));
     }
+    for (const p of CITY_PLAN.pagodas) this._as(`pagoda@${p.x},${p.z}`, () => this.buildPagoda(p.x, p.z, p.levels));
+    // 巨型地标：通天宝塔，立于中轴主殿之后，全城可见
+    this._as("grand-pagoda", () => this.buildGrandPagoda(0, CITY_PLAN.grandPagoda.z, CITY_PLAN.grandPagoda.levels));
 
-    // 5. 宝塔
-    for (const p of CITY_PLAN.pagodas) this.buildPagoda(p.x, p.z, p.levels);
-
-    // 6. 宫墙（带城门开口）
-    const H = CITY_PLAN.wall.half;
-    const gz = CITY_PLAN.gate.z;
-    const gw = CITY_PLAN.gate.halfW;
-    this.wallSegment(-H, -H, H, -H, CITY_PLAN.wall.height, {});
-    this.wallSegment(-H, H, H, H, CITY_PLAN.wall.height, { gate: [H - gw, H + gw] });
-    this.wallSegment(-H, -H, -H, H, CITY_PLAN.wall.height, {});
-    this.wallSegment(H, -H, H, H, CITY_PLAN.wall.height, {});
-
-    // 7. 后苑：塔林 + 竹林 + 石灯
-    this.buildRearGarden();
-
-    // 8. 生活化道具（摊位 / 酒旗 / 水井 / 花坛 / 拴马桩）
-    this.buildProps();
-
-    // 9. 云雾仙山浮岛 + 登岛石阶
+    // ---- 浮岛与登岛石阶（石阶和浮岛同属一个结构） ----
     for (const isl of CITY_PLAN.islands) {
-      this.buildFloatingIsland(isl.x, isl.y, isl.z, isl.r);
+      this._as(`island@${isl.x},${isl.z}`, () => this.buildFloatingIsland(isl.x, isl.y, isl.z, isl.r));
     }
-
-    // 9.1 清理浮岛周围的孤立屋顶碎片（会挡住飞行路线）
+    // 清理浮岛周围的孤立屋顶碎片（会挡住飞行路线）；必须在石阶之前，避免把台阶误删
     this.clearStrayFragments(CITY_PLAN.islands);
-
-    // 9.2 为每座浮岛建登岛石阶（必须在清理之后，避免被误删）
     for (const isl of CITY_PLAN.islands) {
-      // 找该浮岛中心列的最高实心方块作为顶面
+      // 该浮岛中心列的最高实心方块作为顶面
       let topY = isl.y;
       for (let yy = isl.y + 20; yy >= isl.y - 10; yy--) {
         if (this.world.solidAt(isl.x, yy, isl.z)) { topY = yy; break; }
       }
-      this.buildSkyStair(isl.x, isl.y, isl.z, isl.r, topY + 1);
+      this._as(`island@${isl.x},${isl.z}`, () => this.buildSkyStair(isl.x, isl.y, isl.z, isl.r, topY + 1));
     }
 
-    this.buildClouds();
-    // 低空云海：从高处俯瞰形成「云上之城」
-    this.buildCloudSea();
-    this.scatterVegetation();
+    // ---- 宫墙：最后砌，遇到城门、石阶自动留缺口 ----
+    const wl = CITY_PLAN.wall;
+    const gw = CITY_PLAN.gate.halfW;
+    this._as("city-wall", () => {
+      this.wallSegment(-wl.halfX, wl.north, wl.halfX, wl.north, wl.height, {});
+      this.wallSegment(-wl.halfX, wl.south, wl.halfX, wl.south, wl.height, { gate: [-gw, gw] });
+      this.wallSegment(-wl.halfX, wl.north, -wl.halfX, wl.south, wl.height, {});
+      this.wallSegment(wl.halfX, wl.north, wl.halfX, wl.south, wl.height, {});
+    });
 
-    // 巨型地标：通天宝塔，立于中轴主殿之后，全城可见
-    this.buildGrandPagoda(0, -92, 9);
+    // ---- 装饰：遇到已有结构就让开（不会打穿柱子、墙、屋檐） ----
+    this._as("rear-garden-decor", () => this.buildRearGardenDecor(), { yield: true });
+    this._as("props", () => this.buildProps(), { yield: true });
+    this._as("lantern-street", () => this.buildLanternStreet(), { yield: true });
+
+    // ---- 自然装饰最后撒：只落在没有结构占地的地方 ----
+    // 植被先于云：云是实心方块，先铺云的话植被按「最高实心方块」找地表会落在云顶上而整片跳过
+    // （城外的竹林、松林只剩一成）；云用 setIfAir，会自己绕开树冠
+    this._avoidFootprint = true;
+    try { this.scatterVegetation(); } finally { this._avoidFootprint = false; }
+    this.buildClouds();
+    this.buildCloudSea(); // 低空云海：从高处俯瞰形成「云上之城」
 
     // 生成阶段用了 setRaw/fillColumnRaw（不逐格标脏），这里统一标脏
+    this._restoreWorld();
+    if (!this.keepOwners) this._cellOwner = null;
     this.world.markAllDirty();
 
     return this.world;
@@ -1179,43 +1329,63 @@ export class WorldGenerator {
     });
 
     // 店内长明灯
+    // 店内灯台：灯立在两格高的木柱上（旧版灯悬在半空，什么都没挂着）
+    w.set(cx, floorY, cz, ID.wood_beam);
+    w.set(cx, floorY + 1, cz, ID.wood_beam);
     w.set(cx, floorY + 2, cz, ID.glow);
     this.landmarks.push({ type: "lantern", pos: [cx, floorY + 2, cz] });
     return this;
   }
 
   /** 后苑：塔林、石灯、竹林。 */
-  buildRearGarden() {
+  /** 后苑地面（先铺，之后的宝塔、通天塔落在它上面）。 */
+  buildRearGardenGround() {
+    const w = this.world;
+    const base = CITY.baseY;
+    const { zFrom, zTo } = CITY_PLAN.rear;
+    for (let x = -30; x <= 30; x++) {
+      for (let z = zTo; z <= zFrom; z++) w.set(x, base, z, ID.moss_stone);
+    }
+    return this;
+  }
+
+  /** 后苑装饰：石灯阵列与小亭（在通天塔之后放，避开它的占地）。 */
+  buildRearGardenDecor() {
     const w = this.world;
     const base = CITY.baseY;
     const { zFrom, zTo } = CITY_PLAN.rear;
 
-    // 铺地
-    for (let x = -30; x <= 30; x++) {
-      for (let z = zTo; z <= zFrom; z++) {
-        w.set(x, base, z, ID.moss_stone);
-        for (let y = base + 1; y < base + 12; y++) w.set(x, y, z, ID.air);
-      }
-    }
+    // 装饰整件放置：整个占地都空着才放，否则整件跳过（不会只剩半截柱子、悬空的屋顶）。
+    // 后苑中间是通天塔的台基，石灯与小亭排在两侧。
+    const fits = (x0, z0, x1, z1) => {
+      for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) if (this.claimed(x, z)) return false;
+      return true;
+    };
 
     // 石灯阵列
     for (let z = zFrom - 6; z >= zTo + 6; z -= 12) {
       for (const sx of [-1, 1]) {
-        const x = sx * 14;
-        for (let k = 1; k <= 3; k++) w.set(x, base + k, z, ID.marble);
-        w.set(x, base + 4, z, ID.lantern);
-        this.landmarks.push({ type: "lantern", pos: [x, base + 4, z] });
+        const x = sx * 25;
+        if (!fits(x, z, x, z)) continue;
+        this._item(() => {
+          for (let k = 1; k <= 3; k++) w.set(x, base + k, z, ID.marble);
+          w.set(x, base + 4, z, ID.lantern);
+          this.landmarks.push({ type: "lantern", pos: [x, base + 4, z] });
+        });
       }
     }
 
-    // 小亭
-    for (const [ox, oz] of [[-20, zFrom - 14], [20, zFrom - 14]]) {
-      for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
-        for (let k = 1; k <= 4; k++) w.set(ox + dx, base + k, oz + dz, ID.pillar_red);
-      }
-      this.buildRoof(ox, oz, 4, 4, base + 5, { style: "ink", upturn: 2 });
-      w.set(ox, base + 1, oz, ID.glow);
-      this.landmarks.push({ type: "lantern", pos: [ox, base + 1, oz] });
+    // 小亭（含两级起翘的屋檐，占地半径 6）
+    for (const [ox, oz] of [[-27, zFrom - 14], [27, zFrom - 14], [-27, zTo + 12], [27, zTo + 12]]) {
+      if (!fits(ox - 6, oz - 6, ox + 6, oz + 6)) continue;
+      this._item(() => {
+        for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
+          for (let k = 1; k <= 4; k++) w.set(ox + dx, base + k, oz + dz, ID.pillar_red);
+        }
+        this.buildRoof(ox, oz, 4, 4, base + 5, { style: "ink", upturn: 2 });
+        w.set(ox, base + 1, oz, ID.glow);
+        this.landmarks.push({ type: "lantern", pos: [ox, base + 1, oz] });
+      });
     }
     return this;
   }
@@ -1227,7 +1397,7 @@ export class WorldGenerator {
 
     // 沿中轴大道两侧摆摊位
     for (let z = 80; z >= 34; z -= 11) {
-      for (const sx of [-1, 1]) {
+      for (const sx of [-1, 1]) this._item(() => {
         const x = sx * 10;
         // 摊位台面
         for (let dx = -1; dx <= 1; dx++) {
@@ -1242,15 +1412,15 @@ export class WorldGenerator {
         w.set(x - 1, base + 3, z - 1, ID.wood_beam);
         w.set(x + 1, base + 2, z + 1, ID.wood_beam);
         w.set(x + 1, base + 3, z + 1, ID.wood_beam);
-        // 酒旗
-        w.set(x + sx * 2, base + 5, z, ID.pillar_red);
+        // 酒旗：旗杆从地面立起（旧版只在 base+5 放了一格，悬在半空）
+        for (let k = 1; k <= 5; k++) w.set(x + sx * 2, base + k, z, ID.pillar_red);
         w.set(x + sx * 2, base + 6, z, ID.lantern);
         this.landmarks.push({ type: "lantern", pos: [x + sx * 2, base + 6, z] });
-      }
+      });
     }
 
     // 水井（广场两侧）
-    for (const sx of [-1, 1]) {
+    for (const sx of [-1, 1]) this._item(() => {
       const x = sx * 20;
       const z = 20;
       for (let dx = -1; dx <= 1; dx++) {
@@ -1265,11 +1435,13 @@ export class WorldGenerator {
       // 井架
       w.set(x - 1, base + 2, z, ID.wood_beam);
       w.set(x + 1, base + 2, z, ID.wood_beam);
+      w.set(x - 1, base + 3, z, ID.wood_beam);
+      w.set(x + 1, base + 3, z, ID.wood_beam);
       w.set(x, base + 3, z, ID.wood_beam);
-    }
+    });
 
     // 花坛（广场四角）
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) this._item(() => {
       const x = sx * 22;
       const z = 8 + sz * 22;
       for (let dx = -2; dx <= 2; dx++) {
@@ -1282,15 +1454,15 @@ export class WorldGenerator {
           }
         }
       }
-    }
+    });
 
     // 拴马桩（城门内）
     for (const sx of [-1, 1]) {
-      for (let z = 96; z >= 88; z -= 4) {
+      for (let z = 96; z >= 88; z -= 4) this._item(() => {
         const x = sx * 9;
         for (let k = 1; k <= 3; k++) w.set(x, base + k, z, ID.marble);
         w.set(x, base + 4, z, ID.stone_lion);
-      }
+      });
     }
     return this;
   }

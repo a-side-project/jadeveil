@@ -130,7 +130,10 @@ export class Bitmap {
       for (let x = 0; x < this.size; x++) {
         const self = alpha(x, y);
         const around = alpha(x - 1, y) + alpha(x + 1, y) + alpha(x, y - 1) + alpha(x, y + 1);
-        if (inset ? self > 0 && around < 255 * 4 : self === 0 && around > 0) {
+        // 内描边：形状里紧挨着「完全透明」像素的那一圈。旧版用「四邻 alpha 之和不满」判断，
+        // 形状内部的半透明像素（灯笼中心的暖光）也被当成边缘涂成了暗红
+        const touchesEmpty = alpha(x - 1, y) === 0 || alpha(x + 1, y) === 0 || alpha(x, y - 1) === 0 || alpha(x, y + 1) === 0;
+        if (inset ? self > 0 && touchesEmpty : self === 0 && around > 0) {
           this.set(x, y, c, a);
         }
       }
