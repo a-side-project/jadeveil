@@ -12,6 +12,8 @@ export class VoxelWorld {
     this.seed = seed;
     this.chunks = new Map(); // 数字键 -> Uint8Array
     this.dirty = new Set();
+    // 只因光照变化而需要重建的区块：不抢在编辑当帧重建，由区块管理器分帧处理
+    this.lightDirty = new Set();
   }
 
   /**
@@ -59,8 +61,15 @@ export class VoxelWorld {
     const cx = x >> 4;
     const cz = z >> 4;
     const c = this.ensureChunk(cx, cz);
-    c[this.idx(x & 15, y, z & 15)] = id;
+    const i = this.idx(x & 15, y, z & 15);
+    const prev = c[i];
+    c[i] = id;
     this.dirty.add(VoxelWorld.key(cx, cz));
+    // 光照增量更新（world/lighting.js）：光照变化波及的区块一起重建网格
+    const L = this.lighting;
+    if (L && !L.suspended && prev !== id) {
+      for (const k of L.update(x, y, z, prev, id)) if (!this.dirty.has(k)) this.lightDirty.add(k);
+    }
     // 边界方块会影响邻区块的可见面
     const lx = x & 15;
     const lz = z & 15;

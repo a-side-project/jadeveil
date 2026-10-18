@@ -294,6 +294,7 @@ export class NPCManager {
     };
     const base = patch(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }));
     const over = patch(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.88, alphaTest: 0.5, side: THREE.DoubleSide }));
+    this.mats = { base, over };
 
     const n = this.agents.length;
     const roleAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
@@ -303,6 +304,8 @@ export class NPCManager {
       for (const layer of ["base", "over"]) {
         const geo = partGeometry(name, layer).clone();
         geo.setAttribute("aRole", roleAttr);
+        this._partGeos = this._partGeos || [];
+        this._partGeos.push(geo);
         const m = new THREE.InstancedMesh(geo, layer === "base" ? base : over, n);
         m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         m.castShadow = layer === "base";
@@ -407,6 +410,7 @@ export class NPCManager {
     this._frame = (this._frame | 0) + 1;
 
     this._render();
+    this._updateLight(dt);
     if (ctx.camera) this._renderBubbles(ctx.camera, playerPos);
   }
 
@@ -610,6 +614,37 @@ export class NPCManager {
 
   _turn(a, yaw, dt, rate) {
     a.yaw += wrapPi(yaw - a.yaw) * (1 - Math.exp(-rate * dt));
+  }
+
+  /**
+   * 接入烘焙光照（core/entityLight.js）：每位居民一个逐实例光照值，进屋变暗、灯笼下变亮。
+   * 所有部件共用同一个实例属性，每帧只上传一次。
+   */
+  enableLighting(lighting, lightUniforms, makeLit) {
+    this.lighting = lighting;
+    const n = this.agents.length;
+    this.lightAttr = new THREE.InstancedBufferAttribute(new Float32Array(n * 2).fill(1), 2);
+    this.lightAttr.setUsage(THREE.DynamicDrawUsage);
+    for (const g of this._partGeos) g.setAttribute("aEntLight", this.lightAttr);
+    makeLit(this.mats.base, lightUniforms, { instanced: true });
+    makeLit(this.mats.over, lightUniforms, { instanced: true });
+    this._lightS = [0, 0];
+    this._lightInit = false;
+  }
+
+  _updateLight(dt) {
+    const L = this.lighting;
+    if (!L) return;
+    const arr = this.lightAttr.array;
+    const k = this._lightInit ? 1 - Math.exp(-dt * 10) : 1;
+    this._lightInit = true;
+    const s = this._lightS;
+    this.agents.forEach((a, i) => {
+      L.sampleSmooth(a.pos.x, a.pos.y + 1.1 * a.def.scale, a.pos.z, s);
+      arr[i * 2] += (s[0] - arr[i * 2]) * k;
+      arr[i * 2 + 1] += (s[1] - arr[i * 2 + 1]) * k;
+    });
+    this.lightAttr.needsUpdate = true;
   }
 
   _render() {

@@ -137,7 +137,7 @@ export class Avatar {
 
   /**
    * @param {number} dt
-   * @param {object} s 状态 { swimming, submersion, onGround, speed, sprinting, riding, rideBank, yaw, pitch }
+   * @param {object} s 状态 { swimming, submersion, onGround, speed, sprinting, crouching, riding, rideBank, yaw, pitch }
    */
   update(dt, s) {
     this.time += dt;
@@ -145,6 +145,8 @@ export class Avatar {
 
     this._swim = damp(this._swim, s.swimming ? 1 : 0, 8, dt);
     this._ride = damp(this._ride, s.riding ? 1 : 0, 10, dt);
+    this._crouch = damp(this._crouch || 0, s.crouching ? 1 : 0, 12, dt);
+    const crouch = this._crouch;
     this._swingT = Math.min(1, this._swingT + dt / SWING_TIME);
     const swim = this._swim;
     const ride = this._ride;
@@ -164,7 +166,8 @@ export class Avatar {
     // 骑乘时整体随龙的滚转倾斜
     this.group.rotation.z = damp(this.group.rotation.z, ride * (s.rideBank || 0), 8, dt);
 
-    const targetPitch = swim * -1.30 + ride * -0.12;
+    // 蹲下：上身前倾（MC 的潜行姿势）
+    const targetPitch = swim * -1.30 + ride * -0.12 + crouch * -0.45;
     this.body.rotation.x = damp(this.body.rotation.x, targetPitch, 7, dt);
 
     // ---------- 手臂 ----------
@@ -178,9 +181,9 @@ export class Avatar {
     // 手持武器时右臂略前抬（MC 持剑姿态）
     const holdR = this.heldDef ? 0.18 : 0;
 
-    const armLx = lerp(lerp(walkArm, swimArmX, swim), rideArm, ride);
+    const armLx = lerp(lerp(walkArm, swimArmX, swim), rideArm, ride) + crouch * 0.35;
     // 旋转约定：手臂沿 -Y 下垂、模型面朝 -Z，绕 X 正转 = 向前抬；挥击 = 向前上方抡起
-    const armRx = lerp(lerp(-walkArm + holdR, swimArmX2, swim), rideArm, ride) + sw * 1.7;
+    const armRx = lerp(lerp(-walkArm + holdR, swimArmX2, swim), rideArm, ride) + crouch * 0.35 + sw * 1.7;
     armL.rotation.x = damp(armL.rotation.x, armLx, 9, dt);
     armR.rotation.x = this._swingT < 1 ? armRx : damp(armR.rotation.x, armRx, 9, dt);
     const spread = lerp(lerp(0.06, 0.30, swim), 0.18, ride);
@@ -192,17 +195,21 @@ export class Avatar {
     const kick = Math.sin(t * 4.6);
     // 跨坐：大腿前抬 + 外张
     const rideLeg = 1.25;
-    legL.rotation.x = damp(legL.rotation.x, lerp(lerp(gait * 0.78, kick * 0.42, swim), rideLeg, ride), 9, dt);
-    legR.rotation.x = damp(legR.rotation.x, lerp(lerp(-gait * 0.78, -kick * 0.42, swim), rideLeg, ride), 9, dt);
+    // 蹲下时腿相对上身往后收，抵消前倾，脚仍踩在原地（蹲行时步幅减半）
+    const crouchLeg = crouch * 0.45;
+    const g = gait * (1 - crouch * 0.5);
+    legL.rotation.x = damp(legL.rotation.x, lerp(lerp(g * 0.78, kick * 0.42, swim), rideLeg, ride) + crouchLeg, 9, dt);
+    legR.rotation.x = damp(legR.rotation.x, lerp(lerp(-g * 0.78, -kick * 0.42, swim), rideLeg, ride) + crouchLeg, 9, dt);
     legL.rotation.z = damp(legL.rotation.z, ride * -0.38, 9, dt);
     legR.rotation.z = damp(legR.rotation.z, ride * 0.38, 9, dt);
 
     // ---------- 头 ----------
     // 头部跟随视线俯仰（MC 的头会看向准星方向）；游泳时抬头换气
     const look = s.pitch ? Math.max(-0.9, Math.min(0.9, s.pitch)) : 0;
-    this.head.rotation.x = damp(this.head.rotation.x, swim * 0.55 + (1 - swim) * look, 10, dt);
+    // 蹲下时头部抵消上身前倾，保持平视
+    this.head.rotation.x = damp(this.head.rotation.x, swim * 0.55 + (1 - swim) * look + crouch * 0.45, 10, dt);
     const breathe = gait2 * (moving && s.onGround ? 0.02 : 0.012);
-    this.body.position.y = 12 * PX + breathe + swim * 0.06;
+    this.body.position.y = 12 * PX + breathe + swim * 0.06 - crouch * 0.06;
 
     // ---------- 第一人称视模型 ----------
     // 只在第一人称显示；游泳时随划水前后推，挥击时整臂下劈

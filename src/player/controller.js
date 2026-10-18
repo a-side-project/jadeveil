@@ -20,6 +20,11 @@ const PLAYER_H = 1.78; // 身高
 const EYE_H = 1.62; // 眼高
 const EPS = 1e-4;
 
+// ---- 蹲下（MC 的潜行）----
+const CROUCH_H = 1.5; // 蹲下时的碰撞高度
+const CROUCH_EYE_DROP = 0.35; // 视线降低量
+const CROUCH_SPEED = 0.3; // 相对步行速度
+
 const GRAVITY = 30;
 const JUMP_V = 9.4;
 const WALK = 5.0;
@@ -120,6 +125,20 @@ export class Player {
 
     this.keys = new Set();
     this.locked = false;
+    // 触屏模式：没有指针锁定，「正在操控」由触屏层决定（见 engaged）
+    this.touchMode = false;
+    this.touchEngaged = false;
+    // 模拟量移动输入（触屏摇杆）：active 时取代 WASD，x 右为正、y 前为正，模长 0..1 = 速度比例
+    this.moveInput = { x: 0, y: 0, active: false, sprint: false };
+
+    // 蹲下 / 疾跑：按住（hold，默认）或按一下切换（toggle），在设置里选；触屏的蹲下固定为切换
+    this.crouchMode = "hold";
+    this.sprintMode = "hold";
+    this.crouching = false;
+    this.crouchToggled = false;
+    this.sprintToggled = false;
+    this._crouchEye = 0; // 视线下降量（平滑过渡，不会一下子掉下去）
+    this._noFwdT = 0;
     this._tmp = new THREE.Vector3();
     this._probe = new THREE.Vector3();
 
@@ -129,11 +148,16 @@ export class Player {
     this._bind();
   }
 
+  /** 玩家是否正在操控角色：键鼠 = 指针已锁定；触屏 = 游戏进行中。 */
+  get engaged() {
+    return this.locked || this.touchEngaged;
+  }
+
   _bind() {
     const dom = this.dom;
 
     dom.addEventListener("click", () => {
-      if (this.locked) return;
+      if (this.locked || this.touchMode) return;
       // 没有有效手势时浏览器会拒绝锁定（返回被拒的 Promise），吞掉即可
       const r = dom.requestPointerLock();
       if (r && r.catch) r.catch(() => {});
@@ -154,6 +178,10 @@ export class Player {
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "Space") e.preventDefault();
+      if (!e.repeat && this.engaged) {
+        if (e.code === "KeyC" && this.crouchMode === "toggle") this.toggleCrouch();
+        if ((e.code === "ShiftLeft" || e.code === "ShiftRight") && this.sprintMode === "toggle") this.sprintToggled = !this.sprintToggled;
+      }
       this.keys.add(e.code);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -163,9 +191,42 @@ export class Player {
   get eyePosition() {
     return this._tmp.set(
       this.position.x,
-      this.position.y + this.eyeH + this.bobAmount,
+      this.position.y + this.eyeH - this._crouchEye + this.bobAmount,
       this.position.z,
     );
+  }
+
+  /** 切换模式下的蹲下（键盘 C / 触屏 CROUCH 按钮）。飞行、游泳、骑乘时不响应。 */
+  toggleCrouch() {
+    if (this.flying || this.swimming || this.mount) return;
+    this.crouchToggled = !this.crouchToggled;
+  }
+
+  /**
+   * 蹲下状态机：想蹲就立刻蹲（碰撞箱变矮）；想站起来要先确认头顶有空间，
+   * 否则保持蹲姿 —— 不会站起来卡进天花板。
+   */
+  _updateCrouch(dt) {
+    const keys = this.keys;
+    if (this.mount || this.flying || this.swimming) {
+      // 骑乘由坐骑接管碰撞体；飞行 / 游泳时 C 是下降。都不蹲
+      if (this.crouching && !this.mount) this.bh = PLAYER_H;
+      this.crouching = false;
+      this.crouchToggled = false;
+    } else {
+      // 只认 C：Ctrl 在浏览器里和 W 组合是「关闭标签页」，不能拿来做需要按住的游戏键
+      const want = this.crouchMode === "toggle" ? this.crouchToggled : keys.has("KeyC");
+      if (want && !this.crouching) {
+        this.crouching = true;
+        this.bh = CROUCH_H;
+      } else if (!want && this.crouching) {
+        this.bh = PLAYER_H;
+        if (this.collides(this.position.x, this.position.y, this.position.z)) this.bh = CROUCH_H; // 头顶有方块：站不起来
+        else this.crouching = false;
+      }
+    }
+    const target = this.crouching ? CROUCH_EYE_DROP : 0;
+    this._crouchEye += (target - this._crouchEye) * (1 - Math.exp(-14 * dt));
   }
 
   /* ================= 水体 ================= */
@@ -434,10 +495,25 @@ export class Player {
     if (keys.has("KeyS") || keys.has("ArrowDown")) fwd -= 1;
     if (keys.has("KeyD") || keys.has("ArrowRight")) side += 1;
     if (keys.has("KeyA") || keys.has("ArrowLeft")) side -= 1;
-    this.sprinting = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    this._updateCrouch(dt);
+    const shift = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    this.sprinting = this.sprintMode === "toggle" ? this.sprintToggled : shift;
+    // 触屏摇杆：模拟量，轻推慢走、推到底疾跑
+    const mi = this.moveInput;
+    if (mi.active && (mi.x !== 0 || mi.y !== 0)) {
+      fwd = mi.y;
+      side = mi.x;
+      this.sprinting = this.sprinting || mi.sprint;
+    }
+    // 切换式疾跑：停下（0.3 秒没有向前的输入）或蹲下时自动取消，与主流游戏一致
+    if (fwd > 0) this._noFwdT = 0;
+    else this._noFwdT += dt;
+    if (this.sprintToggled && (this._noFwdT > 0.3 || this.crouching)) this.sprintToggled = false;
+    if (this.crouching) this.sprinting = false;
 
+    // 只把超过 1 的合成方向压回单位长度（键盘斜向）；摇杆的小幅度保留为慢速
     const len = Math.hypot(fwd, side);
-    if (len > 0) {
+    if (len > 1) {
       fwd /= len;
       side /= len;
     }
@@ -466,6 +542,18 @@ export class Player {
       this._updateSwim(dt, fwd, side, sinY, cosY, keys);
     } else {
       this._updateWalk(dt, fwd, side, sinY, cosY, keys);
+    }
+
+    // ---- 蹲着走到边缘不会掉下去（MC 的潜行）：这一步会让脚下失去支撑的轴，速度清零 ----
+    if (this.crouching && this.onGround && !this.flying && !this.swimming) {
+      const p = this.position;
+      const nx = p.x + this.velocity.x * dt, nz = p.z + this.velocity.z * dt;
+      if (!this.hasSupportBelow(nx, p.y, p.z)) this.velocity.x = 0;
+      if (!this.hasSupportBelow(p.x, p.y, nz)) this.velocity.z = 0;
+      if (!this.hasSupportBelow(p.x + this.velocity.x * dt, p.y, p.z + this.velocity.z * dt)) {
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+      }
     }
 
     // ---- 移动与碰撞（子步进） ----
@@ -618,7 +706,7 @@ export class Player {
   /** 步行物理：重力 + 跳跃 + 地面/空中不同的操控性。 */
   _updateWalk(dt, fwd, side, sinY, cosY, keys) {
     // 浅滩涉水：速度明显下降，走起来有阻力
-    const speed = (this.sprinting ? RUN : WALK) * (this.inWater ? WADE_DRAG : 1);
+    const speed = (this.crouching ? WALK * CROUCH_SPEED : this.sprinting ? RUN : WALK) * (this.inWater ? WADE_DRAG : 1);
     const dirX = -sinY * fwd + cosY * side;
     const dirZ = -cosY * fwd - sinY * side;
 

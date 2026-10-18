@@ -2,9 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>JADEVEIL — A Voxel Realm of Mist and Jade</title>
-    <meta name="description" content="A Minecraft-styled single-player RPG in the browser: a Chinese voxel capital of mist and jade, JJ in a red hood and a rideable Ender Dragon. Installable, plays offline." />
+    <meta name="description" content="A voxel fantasy realm in the Minecraft render style. Its first city, the Jade City, is open now: explore as JJ in a red hood, build, and ride an Ender Dragon. Plays on desktop, tablet and phone; installable and offline." />
     <meta name="application-name" content="JADEVEIL" />
     <meta name="theme-color" content="#0b1014" />
     <meta name="color-scheme" content="dark" />
@@ -25,7 +25,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="JADEVEIL" />
     <meta property="og:title" content="JADEVEIL — A Voxel Realm of Mist and Jade" />
-    <meta property="og:description" content="A Minecraft-styled single-player RPG: a Chinese voxel capital, JJ in a red hood and a rideable Ender Dragon." />
+    <meta property="og:description" content="A voxel fantasy realm in the Minecraft render style. Its first city, the Jade City, is open now — explore as JJ and ride an Ender Dragon." />
     <meta property="og:url" content="https://jadeveil.xiaoa.name/" />
     <meta property="og:image" content="https://jadeveil.xiaoa.name/og-image.png" />
     <meta property="og:image:width" content="1200" />
@@ -48,7 +48,9 @@
         --bone: #f2e6cf;
       }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a; overscroll-behavior: none; }
+      /* 触屏：整页不响应浏览器手势（滚动 / 双击缩放 / 长按菜单），只有可滚动的卡片允许纵向拖动 */
+      body.touch { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
       body {
         color: var(--bone);
         font-family: "Zpix", "Fusion Pixel", monospace;
@@ -91,18 +93,6 @@
       #timeslider { width: 100%; margin-top: 4px; }
       .btnrow { display: flex; gap: 4px; margin-top: 7px; }
       .btnrow button { flex: 1; cursor: pointer; }
-
-      /* ---------- Settings ---------- */
-      #settings { right: 14px; top: 214px; width: 224px; pointer-events: auto; display: none; z-index: 30; }
-      #settings.open { display: block; }
-      #settings .field { margin-bottom: 11px; }
-      #settings .field > .lbl { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-      #settings .tiers { display: flex; gap: 4px; }
-      #settings .tiers button { flex: 1; cursor: pointer; }
-      #settings input[type=range] { width: 100%; cursor: pointer; }
-      #settings .toggle { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; cursor: pointer; }
-      #settings .toggle .sw { width: 34px; height: 16px; position: relative; }
-      #settings .toggle .sw::after { content: ""; position: absolute; transition: none; }
 
       /* ---------- Hotbar ---------- */
       #hotbar {
@@ -210,43 +200,6 @@
           <button id="btn-cycle"></button>
           <button id="btn-speed"></button>
         </div>
-      </div>
-
-      <div id="settings" class="panel">
-        <div class="title" id="t-settings"></div>
-        <div class="field">
-          <div class="lbl" id="l-quality"></div>
-          <div class="tiers">
-            <button data-q="low" id="q-low"></button>
-            <button data-q="medium" id="q-medium"></button>
-            <button data-q="high" id="q-high"></button>
-            <button data-q="ultra" id="q-ultra"></button>
-          </div>
-        </div>
-        <div class="field">
-          <div class="lbl"><span id="l-sens"></span><span id="v-sens"></span></div>
-          <input id="r-sens" type="range" min="0.3" max="3" step="0.1" value="1" />
-        </div>
-        <div class="field">
-          <div class="lbl"><span id="l-fov"></span><span id="v-fov"></span></div>
-          <input id="r-fov" type="range" min="55" max="100" step="1" value="72" />
-        </div>
-        <div class="toggle on" id="t-bob"><span id="l-bob"></span><span class="sw"></span></div>
-        <div class="toggle on" id="t-shadow"><span id="l-shadow"></span><span class="sw"></span></div>
-        <div class="toggle on" id="t-bloom"><span id="l-bloom"></span><span class="sw"></span></div>
-        <div class="field">
-          <div class="lbl"><span id="l-audio"></span></div>
-        </div>
-        <div class="field">
-          <div class="lbl"><span id="l-musicvol"></span><span id="v-musicvol"></span></div>
-          <input id="r-musicvol" type="range" min="0" max="1" step="0.05" value="0.8" />
-        </div>
-        <div class="toggle on" id="t-music"><span id="l-music"></span><span class="sw"></span></div>
-        <div class="field">
-          <div class="lbl"><span id="l-sfxvol"></span><span id="v-sfxvol"></span></div>
-          <input id="r-sfxvol" type="range" min="0" max="1" step="0.05" value="1" />
-        </div>
-        <div class="toggle on" id="t-sfx"><span id="l-sfx"></span><span class="sw"></span></div>
       </div>
 
       <div id="itemname"></div>

@@ -20,7 +20,7 @@ export class ChunkManager {
     this.viewDistance = opts.viewDistance ?? 7; // 区块
     this.budgetPerFrame = opts.budgetPerFrame ?? 2;
     this.queue = [];
-    this.lanterns = [];
+    this.lightQueue = new Set();
 
     // 距离剔除：超出此距离的区块网格隐藏（不提交 draw call）
     this.cullDistance = opts.cullDistance ?? 150;
@@ -76,9 +76,19 @@ export class ChunkManager {
     assign("cloud", geos.cloud, this.renderer.matCloud, { cast: false });
   }
 
-  /** 处理脏区块队列（每帧限量，避免掉帧）。 */
+  /**
+   * 处理脏区块队列（每帧限量，避免掉帧）。
+   * 光照波及的重建优先于远处的首次加载，但每帧最多一个（单个城区区块约 5ms）。
+   */
   processDirty(budget = this.budgetPerFrame) {
     let n = 0;
+    for (const k of this.lightQueue) {
+      if (n >= Math.min(1, budget)) return n;
+      this.lightQueue.delete(k);
+      const [cx, cz] = VoxelWorld.decode(k);
+      this.build(cx, cz);
+      n++;
+    }
     while (this.queue.length && n < budget) {
       const [cx, cz] = this.queue.shift();
       this.build(cx, cz);
@@ -129,10 +139,11 @@ export class ChunkManager {
       }
     }
 
-    // 脏区块（玩家编辑）优先重建
+    // 脏区块（玩家编辑）当帧重建：放下 / 挖掉方块要立刻看到
     const dirty = this.world.takeDirty();
     if (dirty.length) {
       for (const k of dirty) {
+        this.world.lightDirty.delete(k);
         const [cx, cz] = VoxelWorld.decode(k);
         const dx = cx - pcx;
         const dz = cz - pcz;
@@ -140,6 +151,12 @@ export class ChunkManager {
         this.build(cx, cz);
       }
     }
+    // 只是光照被波及的邻区块：进入分帧队列（每帧限量），一盏灯的光最多影响 4 个区块，
+    // 全部当帧重建会卡一下（实测 M3 Max 上 15ms）
+    for (const k of this.world.lightDirty) {
+      if (this.meshes.has(k)) this.lightQueue.add(k);
+    }
+    this.world.lightDirty.clear();
   }
 
   /** 距离剔除：隐藏远处区块，减少 draw call。 */
@@ -158,36 +175,30 @@ export class ChunkManager {
     }
   }
 
-  /** 设置画质档位。 */
-  setQuality(level) {
-    const presets = {
-      low: { viewDistance: 4, cullDistance: 90 },
-      medium: { viewDistance: 6, cullDistance: 130 },
-      high: { viewDistance: 7, cullDistance: 170 },
-      ultra: { viewDistance: 9, cullDistance: 230 },
-    };
-    const p = presets[level] || presets.high;
-    this.viewDistance = p.viewDistance;
-    this.cullDistance = p.cullDistance;
+  /** 画质：视距与剔除距离（来自 core/quality.js 的配置）。 */
+  setQuality({ viewDistance, cullDistance }) {
+    if (viewDistance === this.viewDistance && cullDistance === this.cullDistance) return;
+    this.viewDistance = viewDistance;
+    this.cullDistance = cullDistance;
     this._pcx = null; // 强制重新加载
     this._pcz = null;
-    return p;
   }
 
-  /** 收集玩家附近的灯笼位置，用于点光源池。 */
-  collectLanterns(landmarks, playerPos, maxDist = 46) {
-    const out = [];
-    for (const lm of landmarks) {
-      if (lm.type !== "lantern") continue;
-      const dx = lm.pos[0] - playerPos.x;
-      const dy = lm.pos[1] - playerPos.y;
-      const dz = lm.pos[2] - playerPos.z;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 > maxDist * maxDist) continue;
-      out.push({ pos: lm.pos, d2 });
+  /**
+   * 视野里有没有水面网格 —— 没有就不必渲染平面反射（整遍场景重绘）。
+   * 每帧都算（只是一百多个包围球的视锥测试），不缓存：缓存会让刚转向水面的那几帧露出旧倒影。
+   */
+  anyWaterVisible(camera) {
+    const f = this._frustum || (this._frustum = new THREE.Frustum());
+    const m = this._pv || (this._pv = new THREE.Matrix4());
+    camera.updateMatrixWorld();
+    m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    f.setFromProjectionMatrix(m);
+    for (const e of this.meshes.values()) {
+      const w = e.water;
+      if (w && w.visible && f.intersectsObject(w)) return true;
     }
-    out.sort((a, b) => a.d2 - b.d2);
-    return out;
+    return false;
   }
 
   get loadedChunks() {

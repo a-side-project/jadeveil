@@ -34,7 +34,9 @@ export class InventoryUI {
         background: rgba(5,7,10,0.55); pointer-events: auto; }
       #inv.open { display: flex; }
       #inv .panel { position: relative; display: flex; flex-direction: column; gap: 10px; }
-      #inv .tabs { display: flex; gap: 6px; }
+      #inv .head { display: flex; gap: 6px; align-items: stretch; }
+      #inv .tabs { display: flex; gap: 6px; flex: 1; margin: 0; }
+      #inv .head .close { width: 48px; margin: 0; }
       #inv .tabs button { cursor: pointer; padding: 8px 14px !important; }
       #inv .grid { display: grid; grid-template-columns: repeat(9, 50px); gap: 2px; }
       #inv .grid.hot { margin-top: 10px; }
@@ -54,7 +56,10 @@ export class InventoryUI {
     el.id = "inv";
     el.innerHTML = `
       <div class="panel">
-        <div class="tabs btnrow"><button data-tab="bag" class="on"></button><button data-tab="cat"></button></div>
+        <div class="head">
+          <div class="tabs btnrow"><button data-tab="bag" class="on"></button><button data-tab="cat"></button></div>
+          <div class="btnrow close"><button id="inv-close" aria-label="CLOSE"></button></div>
+        </div>
         <div class="title"></div>
         <div class="grid main bagonly"></div>
         <div class="catalog"></div>
@@ -68,12 +73,16 @@ export class InventoryUI {
     this.titleEl = el.querySelector(".title");
     this.tipEl = el.querySelector(".tip");
     el.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => this.setTab(b.dataset.tab)));
+    // 关闭按钮：触屏没有 E 键，键鼠玩家也多一个直观的出口
+    const closeBtn = el.querySelector("#inv-close");
+    setPixelText(closeBtn, "X", { color: C.gold, scale: 2, center: true });
+    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); this.close(); });
 
     const mkSlot = (parent, index) => {
       const d = document.createElement("div");
       d.className = "slot";
       d.dataset.index = String(index);
-      d.addEventListener("mousedown", (e) => this._slotClick(index, e));
+      d.addEventListener("pointerdown", (e) => this._slotClick(index, e));
       d.addEventListener("mouseenter", () => this._tip(this.inventory.slots[index]));
       parent.appendChild(d);
       return d;
@@ -91,7 +100,7 @@ export class InventoryUI {
       const d = document.createElement("div");
       d.className = "slot";
       this.hud.paintSlot(d, { id: def.id, count: 1 });
-      d.addEventListener("mousedown", (e) => {
+      d.addEventListener("pointerdown", (e) => {
         e.preventDefault();
         // 目录：点一下拿一组到手上（手上已有别的东西则先放回背包）
         if (this.cursor && this.cursor.id !== def.id) this._stowCursor();
@@ -106,17 +115,20 @@ export class InventoryUI {
 
     el.addEventListener("contextmenu", (e) => e.preventDefault());
     // 点空白处关闭
-    el.addEventListener("mousedown", (e) => {
+    el.addEventListener("pointerdown", (e) => {
       if (e.target === el) this.close();
     });
 
     this.cursorEl = document.createElement("div");
     this.cursorEl.id = "inv-cursor";
     document.body.appendChild(this.cursorEl);
-    window.addEventListener("mousemove", (e) => {
+    // 手上的物品跟随指针（鼠标移动 / 手指按下与拖动都更新）
+    const follow = (e) => {
       this.cursorEl.style.left = `${e.clientX - 25}px`;
       this.cursorEl.style.top = `${e.clientY - 25}px`;
-    });
+    };
+    window.addEventListener("pointermove", follow);
+    window.addEventListener("pointerdown", follow, true);
 
     this.setTab("bag");
   }

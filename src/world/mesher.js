@@ -5,20 +5,19 @@
  *  · 只生成暴露面（邻块不透明则剔除），大幅降低三角形数；
  *  · 逐顶点 AO（环境光遮蔽）：按经典 3 邻域算法计算 0..3 级遮蔽；
  *  · 面朝向明暗烘焙进顶点色，配合 AO 让体素不扁平；
+ *  · 平滑光照：每个顶点取面外侧四格（与 AO 同一组格子）的天空光 / 方块光平均值，
+ *    写入 aLight 属性（见 world/lighting.js），由着色器换算成明暗与灯光；
  *  · 发光方块写入 emissive 属性，供自定义着色器做自发光与泛光。
  */
 import * as THREE from "three";
 import { AIR, BLOCKS, FACE_LIGHT, isOpaque, isLiquid } from "./blocks.js";
-import { CH, CW } from "./voxelWorld.js";
+import { CH, CW, VoxelWorld } from "./voxelWorld.js";
 import { hash3i } from "../core/noise.js";
 import { TILE_VARIANTS } from "./atlas.js";
 
-/** 根据方块世界坐标选一个稳定的变体名（变体数表来自 atlas.js，两边同源）。 */
-function variantOf(tileName, x, y, z) {
-  const n = TILE_VARIANTS[tileName];
-  if (!n) return tileName;
-  const v = Math.floor(hash3i(x, y, z, 0x5eed) * n) % n;
-  return `${tileName}#${v}`;
+/** 根据方块世界坐标选一个稳定的变体序号（变体数表来自 atlas.js，两边同源）。 */
+function variantIndex(n, x, y, z) {
+  return Math.floor(hash3i(x, y, z, 0x5eed) * n) % n;
 }
 
 // 六个面的法线与四个角点（逆时针，从面外侧看）
@@ -78,13 +77,103 @@ const AO_OFFSETS = [
 
 const AO_LEVELS = [0.42, 0.62, 0.82, 1.0];
 
-// 地下（无天空光）面的亮度因子：明显压暗但不全黑，让洞穴有“暗”感又能看清轮廓
-const SKY_DARK = 0.38;
+/** 角点的综合亮度（AO × 光照），用来挑三角剖分的对角线。 */
+function cornerBrightness(q) {
+  return AO_LEVELS[q.ao] * (0.4 + 0.6 * Math.max(q.sky, q.block));
+}
+
+// 生成网格时的局部缓存：本区块 + 一圈 1 格宽的邻居（面剔除 / AO / 平滑光照最多只看 ±1 格）
+const PW = CW + 2;
 
 export class ChunkMesher {
   constructor(world, atlas) {
     this.world = world;
     this.atlas = atlas;
+    this._rectCache = new Map(); // 贴图名 → 各变体的 UV 矩形（避免每个面拼字符串 + 查表 + 分配对象）
+    this._ids = new Uint8Array(PW * PW * CH);
+    this._light = new Uint8Array(PW * PW * CH);
+    this._px = 0;
+    this._pz = 0;
+  }
+
+  /**
+   * 把本区块与四周一圈邻居的方块 id、光照拷进连续数组。
+   * 网格生成要查几十万次邻格，每次都走 world.get（区块哈希表）是主要开销；
+   * 换成按下标直接读数组后，单个区块的生成耗时降到原来的几分之一。
+   */
+  _fill(ox, oz) {
+    const ids = this._ids, light = this._light, L = this.world.lighting;
+    this._px = ox - 1;
+    this._pz = oz - 1;
+    ids.fill(0);
+    light.fill(L ? 0 : 0xf0);
+    for (let lz = 0; lz < PW; lz++) {
+      for (let lx = 0; lx < PW; lx++) {
+        const wx = this._px + lx, wz = this._pz + lz;
+        const chunk = this.world.chunks.get(VoxelWorld.key(wx >> 4, wz >> 4));
+        const lc = L ? L.data.get(VoxelWorld.key(wx >> 4, wz >> 4)) : null;
+        const base = (lz * PW + lx) * CH;
+        const cx = wx & 15, cz = wz & 15;
+        if (!chunk) {
+          // 世界之外：空气、露天
+          for (let y = 0; y < CH; y++) light[base + y] = 0xf0;
+          continue;
+        }
+        for (let y = 0; y < CH; y++) {
+          const i = (y * CW + cz) * CW + cx;
+          ids[base + y] = chunk[i];
+          light[base + y] = lc ? lc[i] : 0xf0;
+        }
+      }
+    }
+  }
+
+  /** 某张贴图所有变体的 UV 矩形（首次用到时从图集里取出并缓存）。 */
+  _rects(tileName) {
+    let r = this._rectCache.get(tileName);
+    if (!r) {
+      const n = TILE_VARIANTS[tileName];
+      r = n ? Array.from({ length: n }, (_, v) => this.atlas.uvRect(`${tileName}#${v}`)) : [this.atlas.uvRect(tileName)];
+      this._rectCache.set(tileName, r);
+    }
+    return r;
+  }
+
+  /** 局部缓存里的方块 id（坐标为世界坐标，必须在本区块 ±1 格内）。 */
+  _id(x, y, z) {
+    if (y < 0 || y >= CH) return AIR;
+    return this._ids[((z - this._pz) * PW + (x - this._px)) * CH + y];
+  }
+
+  /** 局部缓存里的光照打包值（高 4 位天空光、低 4 位方块光）。 */
+  _lt(x, y, z) {
+    if (y >= CH) return 0xf0;
+    if (y < 0) return 0;
+    return this._light[((z - this._pz) * PW + (x - this._px)) * CH + y];
+  }
+
+  /**
+   * 某个面某个角的 AO 等级（0 最暗，3 最亮）+ 平滑光照。
+   * 光照取面外侧的四格（基准格、两个切向邻格、对角格）里透光格子的平均值，写进 out.sky / out.block（0..1）。
+   */
+  corner(x, y, z, faceIdx, cornerIdx, out) {
+    const ao = this.aoLevel(x, y, z, faceIdx, cornerIdx);
+    out.ao = ao;
+    const c = this._cells;
+    let n = 0, s = 0, b = 0;
+    for (let i = 0; i < 4; i++) {
+      const cx = c[i * 3], cy = c[i * 3 + 1], cz = c[i * 3 + 2];
+      // 两个切向邻格都被挡住时，对角格在几何上不可见，不参与平均（与 AO 的判定一致）
+      if (i === 3 && c[12] && c[13]) continue;
+      if (i > 0 && c[11 + i]) continue; // 不透明格子（c[12..14]）本身没有光
+      const v = this._lt(cx, cy, cz);
+      s += v >> 4;
+      b += v & 15;
+      n++;
+    }
+    out.sky = n ? s / n / 15 : 0;
+    out.block = n ? b / n / 15 : 0;
+    return out;
   }
 
   /** 计算某个面某个角的 AO 等级（0 最暗，3 最亮）。 */
@@ -114,9 +203,16 @@ export class ChunkMesher {
     const cny = s1y + f.vAxis[1] * vy;
     const cnz = s1z + f.vAxis[2] * vy;
 
-    const o1 = isOpaque(this.world.get(s1x, s1y, s1z)) ? 1 : 0;
-    const o2 = isOpaque(this.world.get(s2x, s2y, s2z)) ? 1 : 0;
-    const oc = isOpaque(this.world.get(cnx, cny, cnz)) ? 1 : 0;
+    const o1 = isOpaque(this._id(s1x, s1y, s1z)) ? 1 : 0;
+    const o2 = isOpaque(this._id(s2x, s2y, s2z)) ? 1 : 0;
+    const oc = isOpaque(this._id(cnx, cny, cnz)) ? 1 : 0;
+    // 采样格子留给平滑光照（corner()）：基准格、切向 1、切向 2、对角，以及三者是否不透明
+    const cl = this._cells || (this._cells = new Int32Array(15));
+    cl[0] = bx; cl[1] = by; cl[2] = bz;
+    cl[3] = s1x; cl[4] = s1y; cl[5] = s1z;
+    cl[6] = s2x; cl[7] = s2y; cl[8] = s2z;
+    cl[9] = cnx; cl[10] = cny; cl[11] = cnz;
+    cl[12] = o1; cl[13] = o2; cl[14] = oc;
 
     if (o1 && o2) return 0;
     return 3 - (o1 + o2 + oc);
@@ -128,7 +224,7 @@ export class ChunkMesher {
     const nx = x + d[0];
     const ny = y + d[1];
     const nz = z + d[2];
-    const other = this.world.get(nx, ny, nz);
+    const other = this._id(nx, ny, nz);
     if (other === AIR) return true;
     if (isOpaque(other)) return false;
     // 同种液体之间不生成面
@@ -142,37 +238,21 @@ export class ChunkMesher {
    * @returns {{opaque: THREE.BufferGeometry|null, cutout: THREE.BufferGeometry|null, water: THREE.BufferGeometry|null}}
    */
   buildChunk(cx, cz) {
-    const world = this.world;
-    const atlas = this.atlas;
     const ox = cx * CW;
     const oz = cz * CW;
 
     const buckets = {
-      opaque: { pos: [], norm: [], uv: [], col: [], emi: [], idx: [] },
-      cutout: { pos: [], norm: [], uv: [], col: [], emi: [], idx: [] },
-      water: { pos: [], norm: [], uv: [], col: [], emi: [], idx: [] },
+      opaque: { pos: [], norm: [], uv: [], col: [], emi: [], light: [], idx: [] },
+      cutout: { pos: [], norm: [], uv: [], col: [], emi: [], light: [], idx: [] },
+      water: { pos: [], norm: [], uv: [], col: [], emi: [], light: [], idx: [] },
     };
-
-    // 预计算该区块及 1 格边界的“天空遮挡高度”：每列最顶上的不透明方块 y（无则 -1）。
-    // 用它判断某个面是否暴露在天空下——地下/洞穴里的面会被压暗，解决“光穿进地下”。
-    const S = CW + 2;
-    const skyTop = new Int16Array(S * S);
-    for (let j = 0; j < S; j++) {
-      for (let i = 0; i < S; i++) {
-        const wx = ox - 1 + i, wz = oz - 1 + j;
-        let top = -1;
-        for (let yy = CH - 1; yy >= 0; yy--) {
-          if (isOpaque(world.get(wx, yy, wz))) { top = yy; break; }
-        }
-        skyTop[j * S + i] = top;
-      }
-    }
-    const topAt = (wx, wz) => skyTop[(wz - (oz - 1)) * S + (wx - (ox - 1))];
+    const cs = [{}, {}, {}, {}];
+    this._fill(ox, oz);
 
     for (let y = 0; y < CH; y++) {
       for (let z = 0; z < CW; z++) {
         for (let x = 0; x < CW; x++) {
-          const id = world.get(ox + x, y, oz + z);
+          const id = this._id(ox + x, y, oz + z);
           if (id === AIR) continue;
           const def = BLOCKS[id];
           if (!def) continue;
@@ -187,19 +267,13 @@ export class ChunkMesher {
             if (!this.faceVisible(ox + x, y, oz + z, f, id)) continue;
             const tileName = def.faces[f];
             if (!tileName) continue;
-            const uv = atlas.uvRect(variantOf(tileName, ox + x, y, oz + z));
+            const rects = this._rects(tileName);
+            const uv = rects.length === 1 ? rects[0] : rects[variantIndex(rects.length, ox + x, y, oz + z)];
             const face = FACES[f];
             const base = bucket.pos.length / 3;
             const shade = FACE_LIGHT[f];
             const emi = def.emissive || 0;
-
-            // 天空光：顶面看本列上方是否无遮挡；侧面看邻列在该高度及以上是否无遮挡；底面恒暗。
-            const fd = face.dir;
-            let skyExposed;
-            if (fd[1] === 1) skyExposed = topAt(ox + x, oz + z) < y + 1;
-            else if (fd[1] === -1) skyExposed = false;
-            else skyExposed = topAt(ox + x + fd[0], oz + z + fd[2]) < y;
-            const sky = skyExposed ? 1 : SKY_DARK;
+            for (let k = 0; k < 4; k++) this.corner(ox + x, y, oz + z, f, k, cs[k]);
 
             for (let k = 0; k < 4; k++) {
               const c = face.corners[k];
@@ -211,18 +285,14 @@ export class ChunkMesher {
               const vv = k === 2 || k === 3 ? uv.v1 : uv.v0;
               bucket.uv.push(uu, vv);
 
-              const ao = this.aoLevel(ox + x, y, oz + z, f, k);
-              const l = shade * AO_LEVELS[ao] * sky;
+              const l = shade * AO_LEVELS[cs[k].ao];
               bucket.col.push(l, l, l);
               bucket.emi.push(emi);
+              bucket.light.push(cs[k].sky, cs[k].block);
             }
 
-            // 依据 AO 选择三角剖分方向，避免出现“折痕”
-            const a0 = this.aoLevel(ox + x, y, oz + z, f, 0);
-            const a1 = this.aoLevel(ox + x, y, oz + z, f, 1);
-            const a2 = this.aoLevel(ox + x, y, oz + z, f, 2);
-            const a3 = this.aoLevel(ox + x, y, oz + z, f, 3);
-            if (a0 + a2 > a1 + a3) {
+            // 依据 AO + 光照选择三角剖分方向，避免出现“折痕”（光照渐变沿对角线插值时也一样）
+            if (cornerBrightness(cs[0]) + cornerBrightness(cs[2]) > cornerBrightness(cs[1]) + cornerBrightness(cs[3])) {
               bucket.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
             } else {
               bucket.idx.push(base + 1, base + 2, base + 3, base + 1, base + 3, base);
@@ -244,6 +314,7 @@ export class ChunkMesher {
       g.setAttribute("uv", new THREE.Float32BufferAttribute(b.uv, 2));
       g.setAttribute("color", new THREE.Float32BufferAttribute(b.col, 3));
       g.setAttribute("aEmissive", new THREE.Float32BufferAttribute(b.emi, 1));
+      g.setAttribute("aLight", new THREE.Float32BufferAttribute(b.light, 2));
       g.setIndex(b.idx);
       g.computeBoundingSphere();
       out[name] = g;

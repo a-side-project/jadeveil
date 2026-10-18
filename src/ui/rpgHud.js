@@ -520,6 +520,11 @@ export class RpgHud {
     }
   }
 
+  /** 触屏：骑乘提示改成按钮说明（没有 F 键）。 */
+  setTouchMode(on) {
+    setPixelText(this.skillbar.querySelector(".label .r"), on ? "DRAGON BUTTON - DISMOUNT" : "F  DISMOUNT", { color: C.dim, scale: 1 });
+  }
+
   setVisible(v) {
     this.bottom.style.display = v ? "flex" : "none";
   }

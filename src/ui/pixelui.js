@@ -128,6 +128,40 @@ function makeCorner() {
   });
 }
 
+/**
+ * 游戏光标：16×16 像素箭头，金色主体 + 墨色描边；可点击元素上换成青玉色。
+ * 输出 1x / 2x 两张（Retina 屏不糊），热点在箭头尖端 (0, 0)。
+ */
+const CURSOR = [
+  "K...............",
+  "KK..............",
+  "KWK.............",
+  "KWLK............",
+  "KWLLK...........",
+  "KWLLLK..........",
+  "KWLLLLK.........",
+  "KWLLLLLK........",
+  "KWLLLLLLK.......",
+  "KWLLLLLLLK......",
+  "KWLLLLLDDDK.....",
+  "KWLLDLLKKKKK....",
+  "KWLKKDLLK.......",
+  "KWK..KDLLK......",
+  "KK...KDLLK......",
+  ".K....KKK.......",
+];
+
+function makeCursor(body, light, deep, scale) {
+  const S = 16 * scale;
+  return px(S, S, (set, rect) => {
+    const legend = { K: [16, 10, 6], W: light, L: body, D: deep };
+    CURSOR.forEach((row, y) => [...row].forEach((ch, x) => {
+      const col = legend[ch];
+      if (col) rect(x * scale, y * scale, scale, scale, col);
+    }));
+  });
+}
+
 function makeScanlines() {
   return px(4, 4, (set) => {
     for (let x = 0; x < 4; x++) {
@@ -151,10 +185,20 @@ export function installPixelUI() {
     slotActive: makeSlot(true),
     corner: makeCorner(),
     scan: makeScanlines(),
+    cursor: makeCursor(P.gold, P.goldLit, P.goldDeep, 2),
+    cursor2x: makeCursor(P.gold, P.goldLit, P.goldDeep, 4),
+    cursorHot: makeCursor([111, 192, 174], [214, 255, 240], P.jade, 2),
+    cursorHot2x: makeCursor([111, 192, 174], [214, 255, 240], P.jade, 4),
   };
+  const cur = (a, b) => `url(${a}) 0 0, default !important; cursor: -webkit-image-set(url(${a}) 1x, url(${b}) 2x) 0 0, default !important; cursor: image-set(url(${a}) 1x, url(${b}) 2x) 0 0, default !important`;
 
   const css = `
 * { border-radius: 0 !important; }
+/* 像素光标：全局箭头；可点击的元素换成青玉色箭头（游戏中指针锁定时浏览器自己会隐藏） */
+html, body, body * { cursor: ${cur(T.cursor, T.cursor2x)}; }
+button, button *, .slot, .slot *, .toggle, .toggle *, input[type=range], .sk, .sk *, [data-hot], [data-hot] * {
+  cursor: ${cur(T.cursorHot, T.cursorHot2x)};
+}
 body { -webkit-font-smoothing: none; image-rendering: pixelated; }
 canvas { image-rendering: pixelated; }
 

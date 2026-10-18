@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  A single-player RPG in the Minecraft render style, built from scratch on three.js — a Chinese voxel capital of mist and jade, a hero in a red hoodie, and an Ender Dragon you can ride.
+  A voxel fantasy realm in the Minecraft render style, built from scratch on three.js. Its first city — the Jade City, a capital of mist, crimson halls and floating jade islands — is open now: explore it as JJ in his red hood, build with Chinese materials, and fly over it on an Ender Dragon.
 </p>
 
 <p align="center">
@@ -36,8 +36,9 @@
   <img alt="three.js r186" src="https://img.shields.io/badge/THREE.JS-r186-e8b44a?style=for-the-badge&labelColor=0b1014">
   <img alt="No build step" src="https://img.shields.io/badge/BUILD%20STEP-NONE-6fc0ae?style=for-the-badge&labelColor=0b1014">
   <img alt="Single player" src="https://img.shields.io/badge/MODE-SINGLE%20PLAYER-c0392b?style=for-the-badge&labelColor=0b1014">
+  <img alt="Desktop, tablet and phone" src="https://img.shields.io/badge/PLAYS%20ON-DESKTOP%20%C2%B7%20TABLET%20%C2%B7%20PHONE-e8b44a?style=for-the-badge&labelColor=0b1014">
   <img alt="Saves" src="https://img.shields.io/badge/SAVES-INDEXEDDB%20%2B%20FILE-9b3fe0?style=for-the-badge&labelColor=0b1014">
-  <img alt="Tests" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-77%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
+  <img alt="Tests" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-84%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
 </p>
 
 <p align="center">
@@ -48,7 +49,9 @@
 
 ## The realm
 
-JADEVEIL is a browser game that borrows Minecraft's look — blocky worlds, pixel textures, a 64 × 64 player skin — and points it at a different genre: a story-driven, single-player RPG in the spirit of an MMO capital city. The long-term target is *a Minecraft-rendered Guild Wars 2*; this repository is the foundation that makes that possible.
+JADEVEIL is the name of a whole realm, not a single map. The long-term goal is a world on the scale of *Guild Wars 2* — many regions, cities and peoples tied together by one lore — rendered with Minecraft's look: blocky terrain, pixel textures and a 64 × 64 player skin. The genre is a story-driven single-player RPG rather than a sandbox.
+
+Today one place exists: **the Jade City**, the first capital of the realm. Its art direction draws on the Pandaria region of *World of Warcraft* — crimson halls, gilded glazed roofs, lantern streets, terraced gardens and floating islands wrapped in mist. Everything in this repository is the foundation the rest of the realm will be built on: rendering, lighting, physics, residents, combat, saves and an interface that works on every device.
 
 Everything is procedural and offline. All 200+ block textures are painted pixel by pixel in code, the world is generated deterministically from a fixed seed, and the game runs straight from ES modules — there is no bundler, no build step and no runtime network dependency.
 
@@ -82,6 +85,8 @@ Play instantly at **[jadeveil.xiaoa.name](https://jadeveil.xiaoa.name)**. JADEVE
 | Android (Chrome) | **INSTALL APP** in the menu, or ⋮ → *Install app* |
 | iPhone / iPad (Safari) | Share → *Add to Home Screen* (the title screen shows the hint) |
 
+The game starts in fullscreen on browsers that support it (turn this off under **SETTINGS → GRAPHICS**). In fullscreen a short press of `Esc` opens the pause menu instead of leaving fullscreen. Phones and tablets play in landscape; holding a phone upright shows a rotate prompt and pauses the game.
+
 The game shell is precached at install time, and every module, texture and sound is cached the first time you play. After that the game boots fully offline. Saves live in the browser for each origin. To move progress between devices or domains, use **EXPORT SAVE FILE** and **LOAD SAVE FILE** in the pause menu.
 
 ## Highlights
@@ -109,32 +114,74 @@ The game shell is precached at install time, and every module, texture and sound
   </tr>
   <tr>
     <td valign="top">
-      <h3>Lighting that respects the pixels</h3>
-      <p>Bloom is selective, following the official three.js example, so only lanterns, gilded tiles, torch flames, the jade blade and dragon effects glow. God rays come from an occlusion mask, which avoids afterimages, and the water uses planar reflection with caustics.</p>
+      <h3>Light that stays where it belongs</h3>
+      <p>Lanterns and torches no longer use real-time point lights. Sky light and block light flood through the voxel world, one level per block, the way Minecraft lights a world. Walls stop the light, rooms and eaves darken step by step, and every vertex averages its four neighbours for smooth gradients. Edits relight incrementally and give exactly the same result as a full recompute. Players, residents and the dragon sample the same light field, so they darken indoors and glow under a lantern. The sun's shadow map is snapped to texels, so shadow edges do not shimmer while you walk.</p>
     </td>
     <td valign="top">
       <h3>A real game loop</h3>
-      <p>The game has health, air, fall damage, regeneration and death. Melee has cooldowns and falling crits, broken blocks drop items you can pick up, and torches mount on floors and walls and fall off when their support is removed. Everything is wired through one event bus.</p>
+      <p>The game has health, air, fall damage, regeneration and death. Melee has cooldowns and falling crits, broken blocks drop items you can pick up, and torches mount on floors and walls and fall off when their support is removed. Crouching keeps you from walking off ledges. Everything is wired through one event bus.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>A sky computed, not painted</h3>
+      <p>The sky is a single-scattering atmosphere with Rayleigh and Mie scattering and ozone absorption. The same model drives the fog, the ambient light and the sun's colour, so the horizon always matches the sky. Sunsets fade from gold to red to a violet afterglow. After dusk the moon takes over as the shadow-casting light. It has an eight-day cycle of phases with a correct terminator, and on a new-moon night the lanterns are the only light. The stars turn through the night.</p>
+    </td>
+    <td valign="top">
+      <h3>Full quality on strong machines, smooth on weak ones</h3>
+      <p>Five graphics settings are available: AUTO, LOW, MED, HIGH and ULTRA. Each one actually removes work — resolution, shadows, bloom, god rays, reflections, view distance and particles — instead of only hiding it. Passes that would contribute nothing are skipped every frame. AUTO starts from a GPU and device check, so high-end desktops run ULTRA, and it steps down one setting only after sustained low frame rates, telling the player where to change it. On an Apple M3 Max, a frame costs 0.46 ms on LOW and 5.65 ms on ULTRA.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Built for touch, not adapted to it</h3>
+      <p>On phones and tablets the game uses a floating analog stick: a light push walks and the edge sprints. Dragging on the right turns the camera and tapping attacks, and multi-touch works throughout. Jump, place, crouch, descend, the menus and the dragon skills all have their own buttons, placed within the device's safe areas. The interface keeps touch targets large on small screens.</p>
+    </td>
+    <td valign="top">
+      <h3>A proper settings window</h3>
+      <p>Settings open in a centred window with GRAPHICS, CONTROLS and AUDIO tabs. Every key is listed with how it works (HOLD, PRESS or CLICK), crouch and sprint can each be set to hold or toggle, and RESTORE DEFAULTS resets everything with a confirmation. The cursor is pixel art. Any open window releases the mouse, and closing it never leaves the game stuck without control.</p>
     </td>
   </tr>
 </table>
 
 ## Controls
 
-| Action | Key |
+**Keyboard and mouse.** HOLD means the action lasts while the key is down; crouch and sprint can be switched to TOGGLE in **SETTINGS → CONTROLS**.
+
+| Action | Key | How |
+|---|---|---|
+| Move | `W` `A` `S` `D` | hold |
+| Sprint | `Shift` | hold (or toggle) |
+| Crouch — slower, and you cannot walk off ledges | `C` | hold (or toggle) |
+| Jump; hold to swim up or ascend | `Space` | press |
+| Attack target, or break the block under the crosshair | Left mouse | click |
+| Place held block / mount torch on floor or wall | Right mouse | click |
+| Select hotbar slot | `1`–`9` · mouse wheel | press |
+| Inventory and build catalog | `E` | press |
+| Summon / dismiss the Ender Dragon | `F` | press |
+| Dragon breath (left mouse also works) | `1` while mounted | hold |
+| Fireball · void dash · roar | `2` `3` `4` while mounted | press |
+| Descend while flying or swimming | `C` | hold |
+| Camera: first person → third person → orbit | `V` | press |
+| Settings window | `O` | press |
+| Time speed · minimap · hide HUD | `T` · `M` · `H` | press |
+| Debug overlay (stats, time of day, chunk progress) | `F3` | press |
+| Pause menu: save, export, load, settings, fullscreen, title | `Esc` | press |
+
+**Touch (phones and tablets, landscape).**
+
+| Action | Touch |
 |---|---|
-| Move / sprint / jump | `W` `A` `S` `D` · `Shift` · `Space` |
-| Attack target, or break the block under the crosshair | Left mouse |
-| Place held block / mount torch on floor or wall | Right mouse |
-| Select hotbar slot | `1`–`9` · mouse wheel |
-| Inventory and build catalog | `E` |
-| Summon / dismiss the Ender Dragon | `F` |
-| Dragon skills: breath (hold) · fireball · void dash · roar | `1` `2` `3` `4` (left / right mouse also trigger breath / fireball) |
-| Ascend / descend while mounted | `Space` · `Ctrl` or `C` |
-| Camera: first person → third person → orbit | `V` |
-| Time speed · head bob · settings · minimap · hide HUD | `T` · `B` · `O` · `M` · `H` |
-| Debug overlay (stats, time of day, chunk progress) | `F3` |
-| Pause menu: save, export, load, settings, title | `Esc` |
+| Move — push to the edge to sprint | Left thumb anywhere on the left side (floating stick) |
+| Look around | Drag on the right side |
+| Attack / break block | Tap the right side |
+| Jump · swim up · ascend | **JUMP** (hold) |
+| Place block / torch | **PLACE** |
+| Crouch on / off | **CROUCH** |
+| Descend while flying or swimming | **DOWN** (hold) |
+| Select item | Tap a hotbar slot |
+| Pause · inventory · dragon · camera | **MENU** · **BAG** · **DRAGON** · **VIEW** |
+| Dragon skills | Tap a skill slot; hold **BREATH** |
 
 ## Gameplay systems
 
@@ -144,12 +191,16 @@ The game shell is precached at install time, and every module, texture and sound
 | Health | 20 HP, fall damage of blocks fallen minus 3, 10 s of air, regeneration after 6 s without damage, death and respawn | `src/game/health.js` |
 | Inventory | 36 slots (hotbar + pack); take, split and shift-move stacks; a build catalog with every block | `src/game/inventory.js`, `src/ui/inventoryUI.js` |
 | Building | Breaking spawns item drops that magnetize into the pack; placing consumes the held stack | `src/player/interaction.js`, `src/game/drops.js` |
-| Items | Wooden, stone and jade swords (damage, cooldown, knockback, crits); torches with flame particles and pooled point lights | `src/game/items.js`, `src/game/sprites.js`, `src/game/torches.js` |
+| Items | Wooden, stone and jade swords (damage, cooldown, knockback, crits); torches with flame particles that emit block light | `src/game/items.js`, `src/game/sprites.js`, `src/game/torches.js` |
 | Combat | Damageable registry, sphere / cone / ray queries, lingering damage zones, floating damage numbers | `src/game/combat.js`, `src/game/dummy.js` |
 | Mount | Ender Dragon model, flight tuning, banking, energy, four skills, pixel-square VFX | `src/mount/` , `src/fx/fxParticles.js` |
 | Residents | 10 roles on one atlas-skinned instanced rig; POIs, conversations, greetings, look-at, dragon sightings | `src/world/npc.js`, `src/world/navgrid.js` |
 | Saves | IndexedDB autosave, title-screen continue, `.jadeveil` export and import, versioned migration | `src/game/save.js`, `src/game/worldEdits.js` |
-| Interface | Pixel-font UI, title and pause menus, one aligned bottom HUD, viewport-aware scaling | `src/ui/` |
+| Interface | Pixel-font UI and pixel cursor; title and pause menus; a tabbed settings window with restore defaults; one aligned bottom HUD; viewport-aware scaling with touch minimums | `src/ui/` |
+| Lighting | Sky light + block light flood fill (0–15 per block), smooth per-vertex lighting, incremental relight on edits, light probes for entities | `src/world/lighting.js`, `src/core/entityLight.js` |
+| Day & night | Rayleigh / Mie / ozone atmosphere shared by sky, fog and lights; sun → moon key light; eight-day lunar phases; rotating stars; twilight adaptation | `src/core/atmosphere.js`, `src/core/sky.js`, `src/core/daynight.js` |
+| Graphics | Five settings, a device check, an auto governor, per-frame pass skipping and particle density | `src/core/quality.js`, `src/core/renderer.js` |
+| Devices | Touch controls with an analog stick, a rotate-to-landscape guard, fullscreen with keyboard lock, a ghost-click guard | `src/ui/touchControls.js`, `src/ui/rotateGuard.js`, `src/ui/fullscreen.js` |
 
 ## Architecture
 
@@ -157,11 +208,16 @@ The game shell is precached at install time, and every module, texture and sound
 flowchart LR
     GEN[Seeded world generator] --> WORLD[(VoxelWorld chunks)]
     EDITS[WorldEdits diff] --> WORLD
-    WORLD --> MESH[Chunk mesher + AO + skylight]
+    WORLD --> LIGHT[Light engine: sky + block flood fill]
+    LIGHT --> MESH[Chunk mesher + AO + smooth light]
+    LIGHT --> PROBE[Entity light probes]
+    ATMO[Atmosphere model] --> SKY[Sky · fog · sun/moon light]
+    SKY --> RENDER
     WORLD --> NAV[Nav height field + A*]
     MESH --> RENDER[Renderer: PBR atlas · water · selective bloom · god rays · FXAA]
 
-    INPUT[Keyboard + mouse] --> PLAYER[Player controller]
+    INPUT[Keyboard + mouse · touch] --> PLAYER[Player controller]
+    QUALITY[Graphics settings + auto governor] --> RENDER
     PLAYER --> MOUNT[Dragon mount]
     PLAYER --> INTERACT[Interaction]
     INTERACT --> EDITS
@@ -184,10 +240,22 @@ Systems talk through `src/game/events.js` (`domain:action` events) rather than c
 ### Frame order
 
 ```text
-day/night → player physics → mount pose & skills → avatar pose
+day/night (atmosphere-derived colours) → player physics → mount pose & skills → avatar pose
 → health · combat zones · drops · torches · autosave
-→ chunk streaming & culling → light pool (lanterns + torches, nearest 8)
-→ residents → particles → god-ray mask → bloom composer → main composer → HUD
+→ chunk streaming & culling (light-only remeshes spread over frames) → entity light probes
+→ residents → particles → [reflection if water is visible] → [god-ray mask if the sun is on screen]
+→ [bloom composer] → main composer → HUD · touch layer · auto governor
+```
+
+### Lighting
+
+```text
+light(x, y, z) = sky << 4 | block                       (each 0..15)
+sky   : 15 straight down through air; −1 per block sideways; leaves / water cost more
+block : lanterns 15, torches 14; −1 per block; opaque blocks stop it
+vertex: average of the 4 cells the corner touches (same cells as AO)
+shade : albedo × mix(0.36, 1, sky^1.5)  +  albedo × warm × block^1.35 × day/night strength
+edit  : remove-flood the old light, re-flood from the boundary, remesh only the chunks that changed
 ```
 
 ### Resident movement guarantee
@@ -229,15 +297,15 @@ og-image.png                # 1200 × 630 social card
 serve.mjs                   # Zero-dependency static dev server
 src/
 ├── main.js                 # Boot, state machine, system wiring, test runner hooks
-├── core/                   # Renderer, sky, day/night, water, ambient particles
-├── world/                  # Voxel storage, generator, mesher, atlas, tiles, nav, residents
+├── core/                   # Renderer, atmosphere, sky, day/night, graphics settings, entity light, water, particles
+├── world/                  # Voxel storage, generator, light engine, mesher, atlas, tiles, nav, residents
 ├── player/                 # Controller, avatar (JJ), skin rig, interaction
 ├── game/                   # Events, items, inventory, health, combat, drops, torches, saves
 ├── mount/                  # Ender Dragon model and mount controller
 ├── fx/                     # Pixel-square particle pool
 ├── audio/                  # Audio manager (CC0 / CC-BY sound effects)
-└── ui/                     # Pixel font & UI kit, HUDs, menus, inventory, UI scaling
-tests/                      # In-browser suites (collision, islands, world guard, water, quality, rpg, npc)
+└── ui/                     # Pixel font & UI kit, HUDs, menus, settings, inventory, touch, fullscreen, UI scaling
+tests/                      # In-browser suites (collision, islands, world guard, water, quality, rpg, npc, ux)
 vendor/three/               # Pinned three.js r186 core + used addons
 audio/                      # Sound effects + CREDITS.md
 scripts/brand.mjs           # One 32 × 32 pixel logo → every icon, wordmark and social card
@@ -273,7 +341,12 @@ __pandaria.runWaterTests()               //  5  buoyancy, swimming, underwater v
 __pandaria.runQualityTests()             //  3  avatar & placement regressions
 __pandaria.runRpgTests()                 // 13  health, inventory, drops, building, torches, melee, mount, saves
 __pandaria.runNpcTests()                 //  4  140 residents × 90 s: 0 in walls, 0 in water, 0 off-grid
+await __pandaria.runUxTests()            // 13  light blocked by walls, incremental = full relight, shadow texel snap,
+                                         //     quality tiers, auto governor, crouch at ledges, toggle sprint,
+                                         //     analog stick, settings never strand the pointer, restore defaults
 ```
+
+Add `?quality=low|medium|high|ultra`, `?touch=1` or `?nosw` to the URL to force a graphics setting, force touch mode or bypass the service worker while testing.
 
 ## Deployment
 
@@ -291,6 +364,7 @@ The production build is a static deployment on Vercel, served at **[jadeveil.xia
 
 ## Roadmap
 
+- More of the realm: new regions and cities beyond the Jade City, travelled by dragon
 - Crafting: a 2 × 2 grid in the pack, a crafting table and a recipe book
 - Mobs, AI and loot; a GW2-style weapon skill bar
 - Quests and dialogue with residents; merchants and an economy
@@ -312,5 +386,5 @@ JADEVEIL is an independent, non-commercial project. It is not affiliated with or
 
 <p align="center">
   <strong>JADEVEIL — A VOXEL REALM OF MIST AND JADE.</strong>
-  <br><sub>One capital. One hero in a red hood. One very large dragon.</sub>
+  <br><sub>The first city of a larger realm. One hero in a red hood. One very large dragon.</sub>
 </p>

@@ -6,10 +6,13 @@
  *
  * 游戏状态机（state.mode）：
  *   title     标题页（世界已在背后加载好；选择继续 / 新游戏 / 读文件）
- *   play      游戏中（指针锁定）
- *   paused    暂停菜单（ESC 释放指针）
- *   inventory 背包界面（E）
+ *   play      游戏中（键鼠：指针锁定；触屏：触屏操作层接管屏幕）
+ *   paused    暂停菜单（ESC / MENU 按钮；指针释放）
+ *   inventory 背包界面（E / BAG 按钮）
+ *   settings  从游戏中打开的设置窗口（O）；关闭后回到游戏。从标题 / 暂停打开时不改变状态
  *   dead      死亡界面
+ *
+ * 任何界面打开时指针一定是释放的（看得到光标）；回到 play 时重新锁定。
  */
 import * as THREE from "three";
 import { TextureAtlas } from "./world/atlas.js";
@@ -35,6 +38,7 @@ import { WATER_TEST_SOURCE } from "../tests/water.test.mjs";
 import { QUALITY_TEST_SOURCE } from "../tests/quality.test.mjs";
 import { RPG_TEST_SOURCE } from "../tests/rpg.test.mjs";
 import { NPC_TEST_SOURCE } from "../tests/npc.test.mjs";
+import { UX_TEST_SOURCE } from "../tests/ux.test.mjs";
 import { AudioManager } from "./audio/audioManager.js";
 import { events } from "./game/events.js";
 import { Inventory } from "./game/inventory.js";
@@ -54,11 +58,23 @@ import { Menus } from "./ui/menus.js";
 import { installUIScale } from "./ui/uiScale.js";
 import { buildTrainingYard, YARD } from "./world/trainingYard.js";
 import { installPWA, pwa } from "./game/pwa.js";
+import { GraphicsSettings, AutoGovernor, detectTier } from "./core/quality.js";
+import { SettingsUI } from "./ui/settings.js";
+import { TouchControls, detectTouch } from "./ui/touchControls.js";
+import { installRotateGuard } from "./ui/rotateGuard.js";
+import { Fullscreen } from "./ui/fullscreen.js";
+import { LightEngine } from "./world/lighting.js";
+import { makeLit, EntityLightProbe } from "./core/entityLight.js";
 
+// 触屏模式必须最先确定：界面缩放下限、操作说明、竖屏提示都依赖它
+const touchMode = detectTouch();
+document.body.classList.toggle("touch", touchMode);
 // 像素风界面必须在任何内容渲染前装好（含加载页）
 installPixelUI();
 installUIScale();
 installPWA();
+// 竖屏提示：从加载页开始就生效
+const rotateGuard = installRotateGuard(touchMode);
 
 const canvas = document.createElement("canvas");
 canvas.id = "scene";
@@ -74,19 +90,11 @@ window.addEventListener("unhandledrejection", (e) => app.errors.push(String(e.re
 
 const SEED = 20261014;
 
-/** 请求指针锁定：没有用户手势（自动化、读档后重载）时浏览器会拒绝，吞掉这个拒绝。 */
-function lockPointer() {
-  try {
-    const r = canvas.requestPointerLock();
-    if (r && r.catch) r.catch(() => {});
-  } catch {
-    /* 无手势时浏览器拒绝 —— 由暂停菜单的 RESUME 按钮再触发 */
-  }
-}
-
 /* ---------------- 启动流程 ---------------- */
 async function boot() {
   const renderer = new Renderer(canvas);
+  // 画质：设备分级给出 AUTO 起点，玩家的选择记在本地
+  const graphics = new GraphicsSettings(detectTier(renderer.renderer.getContext()));
   const hud0 = {
     bar: document.getElementById("loadbar"),
     msg: document.getElementById("loadmsg"),
@@ -114,6 +122,12 @@ async function boot() {
   const world = gen.generate();
   // 训练场：生成阶段确定性写入（不属于玩家编辑，不进存档差量）
   const yard = buildTrainingYard(world);
+  hud0.set(0.45, "LIGHTING THE LANTERNS...");
+  await frame();
+  // 体素光照：天空光 + 灯笼 / 火把的方块光，整张地图洪泛一次；之后的编辑由 world.set 增量更新
+  const lighting = new LightEngine(world);
+  lighting.computeAll();
+  world.lighting = lighting;
   hud0.set(0.5, "MAPPING THE STREETS...");
   await frame();
   // NPC 导航网格（逐格高度场 + A*）
@@ -128,19 +142,23 @@ async function boot() {
   sky.mesh.layers.enable(GODRAY_SKY);
   const daynight = new DayNight();
   daynight.sample(daynight.time);
-  renderer.setSunDir(daynight.state.sunDir);
+  renderer.setSunDir(daynight.state.lightDir);
   renderer.applyDayNight(daynight.state, sky);
   // 平面反射：水面高度用荷花池水面（城台顶面）
   renderer.initReflection(CITY.baseY + 1);
+  renderer.applyQuality(graphics.profile);
 
   // 4. 区块网格
   const chunks = new ChunkManager(world, atlas, renderer, {
-    viewDistance: 7,
+    viewDistance: graphics.profile.viewDistance,
+    cullDistance: graphics.profile.cullDistance,
     budgetPerFrame: 3,
   });
+  renderer.isWaterVisible = () => chunks.anyWaterVisible(renderer.camera);
 
   // 5. 玩家与化身（杰杰）
   const player = new Player(world, renderer.camera, canvas);
+  player.touchMode = touchMode;
   player.spawnAt(world);
   const avatar = new Avatar(atlas);
   renderer.scene.add(avatar.group);
@@ -149,6 +167,11 @@ async function boot() {
   renderer.scene.add(renderer.camera);
   avatar.setMode(player.mode);
   avatar.placeTo(player.position);
+  // 化身（含第一人称手臂，共用材质）吃烘焙光照：进屋变暗、灯笼下变亮
+  const avatarLight = new EntityLightProbe(lighting, [
+    makeLit(avatar.materials.base, renderer.lightUniforms),
+    makeLit(avatar.materials.over, renderer.lightUniforms),
+  ]);
 
   // 6. 游戏系统
   const fx = new FXParticles(renderer.scene);
@@ -172,19 +195,28 @@ async function boot() {
   // 训练场的火把与假人（假人同时在导航网格上标为障碍，居民会绕开）
   for (const [x, y, z] of yard.torches) torches.onBlockChange(x, y, z, world.get(x, y, z));
   const dummies = [];
+  const dummyLights = [];
   for (const [x, z] of yard.dummies) {
     const d = new TrainingDummy(renderer.scene, x, YARD.floorY + 1, z, 0);
     combat.register(d);
     nav.blockArea(x, z, 0.6);
     dummies.push(d);
+    dummyLights.push(new EntityLightProbe(lighting, [
+      makeLit(d.mats.base, renderer.lightUniforms),
+      makeLit(d.mats.over, renderer.lightUniforms),
+    ]));
   }
+  // 末影龙：本体与翼膜两种材质（眼睛是自发光，不受环境光影响）
+  const dragonLight = new EntityLightProbe(lighting, [
+    makeLit(mount.model.mat, renderer.lightUniforms),
+    makeLit(mount.model.matMembrane, renderer.lightUniforms),
+  ]);
 
   // 7. 界面
   const hud = new HUD(atlas, player, daynight, interaction, world);
   hud.audio = audio;
   hud.inventory = inventory;
   hud.mount = mount;
-  hud.syncAudioSettings();
   const rpgHud = new RpgHud({ atlas, inventory, health, mount, combat, camera: renderer.camera, player });
   const invUI = new InventoryUI({
     inventory,
@@ -243,7 +275,7 @@ async function boot() {
     audio.death();
     if (mount.active) mount.dismiss();
     state.mode = "dead";
-    document.exitPointerLock();
+    releasePointer();
   });
   events.on("ui:toast", (text) => {
     hud.showItemName(text);
@@ -332,6 +364,8 @@ async function boot() {
     state.mode = "play";
     save.enabled = true;
     syncHeld();
+    // 进游戏默认全屏（在 NEW GAME / CONTINUE 的点击里调用，满足浏览器的手势要求）
+    if (fullscreen.auto) fullscreen.enter();
     lockPointer();
     if (cinematicIntro) startCinematic();
   }
@@ -375,7 +409,9 @@ async function boot() {
       const ok = await save.exportFile();
       menus.pauseMessage(ok ? "SAVE FILE DOWNLOADED" : "NOTHING TO EXPORT", ok ? "#6fc0ae" : "#ff7a6a");
     },
-    onSettings: () => hud.toggleSettings(),
+    onSettings: () => openSettings(),
+    onControls: () => openSettings("controls"),
+    onFullscreen: () => fullscreen.toggle(),
     onInstall: () => pwa.install(),
     onQuitTitle: async () => {
       // 重载回标题：世界差量必须重放在干净的生成世界上，重载最稳
@@ -403,38 +439,115 @@ async function boot() {
     location.reload();
   };
 
+  /* ---------------- 指针与界面焦点 ---------------- */
+
+  /**
+   * 回到操控角色：键鼠请求指针锁定；触屏直接接管屏幕。
+   * 没有用户手势时浏览器会拒绝锁定（自动化、ESC 关掉窗口后立刻重锁）——
+   * 这时不能停在「游戏中但没有指针」的死状态，退回暂停菜单让玩家点 RESUME。
+   */
+  function lockPointer() {
+    if (touchMode) {
+      player.touchEngaged = true;
+      hud.setLocked(true);
+      if (state.mode === "paused") state.mode = "play";
+      menus.hidePause();
+      return;
+    }
+    try {
+      const r = canvas.requestPointerLock();
+      if (r && r.catch) r.catch(() => lockFailed());
+    } catch {
+      lockFailed();
+    }
+  }
+
+  /** 释放指针（打开任何界面之前调用），光标随之出现。 */
+  function releasePointer() {
+    if (touchMode) {
+      player.touchEngaged = false;
+      hud.setLocked(false);
+    } else if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }
+
+  function lockFailed() {
+    if (state.mode === "play" && !player.engaged) pauseGame();
+  }
+  document.addEventListener("pointerlockerror", lockFailed);
+
+  function pauseGame() {
+    state.mode = "paused";
+    releasePointer();
+    menus.showPause();
+    save.save();
+  }
+
   player.onLockChange = (locked) => {
     hud.setLocked(locked);
     if (locked) {
       menus.hidePause();
       if (state.mode === "paused") state.mode = "play";
     } else if (state.mode === "play") {
-      state.mode = "paused";
-      menus.showPause();
-      save.save();
+      pauseGame();
     }
   };
-  // 画面点击：只在游戏中 / 暂停时重新锁定指针（标题页、背包、死亡界面不抢指针）
+  // 画面点击：只在暂停时重新锁定指针（标题页、背包、设置、死亡界面不抢指针）
   canvas.addEventListener("click", () => {
-    if (state.mode === "paused") lockPointer();
+    if (state.mode === "paused" && !touchMode) lockPointer();
   });
 
-  // 设置面板回调
-  hud.onQuality = (level) => window.__pandaria.setQuality(level);
-  hud.onShadow = (on) => {
-    renderer.renderer.shadowMap.enabled = on;
-    renderer.scene.traverse((o) => {
-      if (o.material) o.material.needsUpdate = true;
-    });
+  /* ---------------- 设置窗口 ---------------- */
+  function applyGraphics(p) {
+    renderer.applyQuality(p);
+    chunks.setQuality(p);
+    petals.setDensity(p.particles);
+    skyLanterns.setDensity(p.particles);
+    waterMotes.setDensity(p.particles);
+    governor.reset(3);
+  }
+
+  const fullscreen = new Fullscreen();
+  const settingsUI = new SettingsUI({
+    graphics,
+    player,
+    audio,
+    fullscreen,
+    touch: touchMode,
+    click: () => audio.uiClick(),
+    onGraphics: (p) => applyGraphics(p),
+  });
+
+  /** 从游戏中打开：先释放指针（看得到光标），关闭后回到游戏；从标题 / 暂停打开则原地返回。 */
+  function openSettings(page) {
+    if (settingsUI.isOpen) return;
+    if (state.mode === "play") {
+      state.mode = "settings";
+      releasePointer();
+    }
+    settingsUI.open(page);
+  }
+  settingsUI.onClose = () => {
+    if (state.mode === "settings") {
+      state.mode = "play";
+      lockPointer();
+    }
   };
-  hud.onBloom = (on) => {
-    renderer.bloom.enabled = on;
-  };
+
+  // AUTO 画质：帧率持续偏低时降一档，并告诉玩家可以在设置里自己调
+  const governor = new AutoGovernor(graphics, (tier, fps) => {
+    applyGraphics(graphics.profile);
+    settingsUI.sync();
+    const msg = `RUNNING AT ${fps} FPS - GRAPHICS LOWERED TO ${tier.toUpperCase()}`;
+    hud.showItemName(msg);
+    if (state.mode === "title") menus.titleMessage(`${msg}  (SETTINGS > GRAPHICS)`, "#6fc0ae");
+  });
 
   // 7.5 灯笼光核：在每个灯笼位置放一个高亮自发光小球，
   //     给 bloom 一个明确的溢光源（体素本身受贴图限制，亮度不够）
   const glowCore = (() => {
-    const geo = new THREE.SphereGeometry(0.34, 10, 8);
+    const geo = new THREE.SphereGeometry(0.26, 10, 8);
     const mat = new THREE.MeshBasicMaterial({
       color: 0xffd08a,
       transparent: true,
@@ -466,6 +579,7 @@ async function boot() {
 
   // 7.6 主城居民
   const npcs = new NPCManager(world, renderer.scene, nav, STATIONS, 124);
+  npcs.enableLighting(lighting, renderer.lightUniforms, makeLit);
 
   // 7.7 环境粒子：飘落花瓣 / 竹叶 + 香炉烟雾 + 灯笼摇摆
   const petals = new PetalField(renderer.scene, 900, { range: 28, world });
@@ -481,23 +595,39 @@ async function boot() {
   const skyLanterns = new SkyLanterns(renderer.scene, 120, { baseY: 36, rise: 74, range: 130 });
   skyLanterns.points.layers.enable(BLOOM_SCENE);
   const waterMotes = new WaterMotes(renderer.scene, 700, 13);
+  applyGraphics(graphics.profile);
 
   /* ---------------- 输入 ---------------- */
   const skillByDigit = { Digit1: "breath", Digit2: "fireball", Digit3: "dash", Digit4: "roar" };
+  function openInventory() {
+    if (state.mode !== "play" || mount.active) return;
+    state.mode = "inventory";
+    releasePointer();
+    invUI.show();
+  }
+
   window.addEventListener("keydown", (e) => {
+    // 设置窗口打开时：ESC / O 关闭，其余按键不进游戏
+    if (settingsUI.isOpen) {
+      if (e.code === "Escape" || e.code === "KeyO") settingsUI.close();
+      return;
+    }
+    if (e.code === "KeyO" && (state.mode === "play" || state.mode === "paused" || state.mode === "title")) {
+      openSettings();
+      return;
+    }
     if (e.code === "KeyE" && (state.mode === "play" || state.mode === "inventory")) {
-      if (state.mode === "play") {
-        if (mount.active) return;
-        state.mode = "inventory";
-        document.exitPointerLock();
-        invUI.show();
-      } else {
-        invUI.close();
-      }
+      if (state.mode === "play") openInventory();
+      else invUI.close();
       return;
     }
     if (e.code === "Escape" && state.mode === "inventory") {
       invUI.close();
+      return;
+    }
+    // 全屏时 ESC 由游戏接管（键盘锁）：轻按暂停，不会把玩家踢出全屏
+    if (e.code === "Escape" && state.mode === "play") {
+      pauseGame();
       return;
     }
     if (state.mode !== "play") return;
@@ -538,6 +668,28 @@ async function boot() {
   window.addEventListener("mouseup", (e) => {
     if (e.button === 0 && mount.active) mount.setBreath(false);
   });
+
+  // 触屏操作层（手机 / 平板）
+  const touch = touchMode
+    ? new TouchControls({
+      player,
+      interaction,
+      mount,
+      skillEls: rpgHud.skillEls,
+      click: () => audio.uiClick(),
+      onPause: () => { if (state.mode === "play") pauseGame(); },
+      onInventory: () => openInventory(),
+      onMount: () => { if (!health.dead) mount.toggle(); },
+      onCamera: () => {
+        const m = player.cycleMode();
+        hud.showItemName(CAMERA_LABELS[m]);
+        hud.setLocked(player.engaged);
+      },
+    })
+    : null;
+  if (touchMode) rpgHud.setTouchMode(true);
+  // 游戏中转成竖屏：自动暂停（竖屏提示盖住画面时不能让角色继续挨打 / 下坠）
+  rotateGuard.onPortrait = () => { if (state.mode === "play") pauseGame(); };
 
   // 预生成玩家周围区块
   // 注意：每轮必须让出主线程，否则长时间阻塞会让浏览器判定页面无响应。
@@ -612,16 +764,18 @@ async function boot() {
   let frameCount = 0;
   const sunTarget = new THREE.Vector3();
   const _push = new THREE.Vector3();
+  const _probe = new THREE.Vector3();
 
   function loop() {
     requestAnimationFrame(loop);
-    const dt = Math.min(clock.getDelta(), 0.1);
+    const rawDt = clock.getDelta();
+    const dt = Math.min(rawDt, 0.1);
     elapsed += dt;
     const playing = state.mode === "play";
 
     // 昼夜
     const st = daynight.update(dt);
-    renderer.setSunDir(st.sunDir);
+    renderer.setSunDir(st.lightDir);
     renderer.applyDayNight(st, sky);
 
     // 死亡 / 菜单中：不接受移动输入
@@ -660,6 +814,7 @@ async function boot() {
       onGround: player.onGround,
       speed: Math.hypot(player.velocity.x, player.velocity.z),
       sprinting: player.sprinting,
+      crouching: player.crouching,
       riding: mount.active,
       rideBank: mount.bank,
       yaw: mount.active ? mount.yaw : player.yaw,
@@ -687,31 +842,18 @@ async function boot() {
     sunTarget.set(player.position.x, player.position.y, player.position.z);
     renderer.followSun(sunTarget);
 
-    // 点光源池：灯笼与火把一起按距离竞争 8 个名额（数量预算，避免性能崩掉）
-    const lights = [];
-    const nightBoost = 0.25 + st.night * 3.4 + st.warm * 0.5;
-    for (const it of chunks.collectLanterns(gen.landmarks, player.position, 40)) {
-      const falloff = 1 - Math.min(1, Math.sqrt(it.d2) / 40);
-      lights.push({ x: it.pos[0] + 0.5, y: it.pos[1] + 0.5, z: it.pos[2] + 0.5, d2: it.d2, i: nightBoost * (0.5 + falloff * 1.6) * 22 });
-    }
-    for (const { t, d2 } of torches.nearest(player.position, 32)) {
-      // 火把白天也亮（洞穴、室内要靠它），夜里更明显
-      lights.push({ x: t.x + 0.5, y: t.y + 0.75, z: t.z + 0.5, d2, i: (6 + st.night * 10) * torches.flicker(t) });
-    }
-    lights.sort((a, b) => a.d2 - b.d2);
-    for (let i = 0; i < renderer.lanternLights.length; i++) {
-      const l = renderer.lanternLights[i];
-      const it = lights[i];
-      if (!it) {
-        l.intensity = 0;
-        continue;
-      }
-      l.position.set(it.x, it.y, it.z);
-      l.intensity = it.i;
+    // 实体光照：玩家 / 龙 / 假人按所在位置采样烘焙光照（灯笼、火把的光都在体素光照里，不再有实时点光源）
+    _probe.set(player.position.x, player.position.y + player.eyeH * 0.8, player.position.z);
+    avatarLight.update(_probe, dt);
+    if (mount.model.root.visible) dragonLight.update(mount.model.root.position, dt);
+    for (let i = 0; i < dummies.length; i++) {
+      const d = dummies[i];
+      _probe.set(d.pos.x, d.pos.y + 1.2, d.pos.z);
+      dummyLights[i].update(_probe, dt);
     }
 
     // 光核亮度随昼夜：白天几乎不可见，入夜拉满
-    glowCore.mat.opacity = 0.10 + st.night * 0.90 + st.warm * 0.25;
+    glowCore.mat.opacity = 0.04 + st.night * 0.36 + st.warm * 0.1;
     glowCore.mat.color.setRGB(1.0, 0.72 + st.night * 0.14, 0.42 + st.night * 0.10);
 
     // 交互高亮 + 攻击冷却
@@ -730,6 +872,11 @@ async function boot() {
     npcs.update(dt, player.position, { camera: renderer.camera, night: st.night, mounted: mount.active });
 
     // 环境粒子与特效
+    // 不受光照的粒子（花瓣、香烟）跟着昼夜变暗：夜里只剩微光，不会满屏发亮
+    const dim = 0.22 + 0.78 * (1 - st.night) + st.warm * 0.1;
+    petals.uniforms.uBright.value = dim;
+    petals.uniforms.uPx.value = renderer.pixelRatio * window.innerHeight / 900;
+    smoke.uniforms.uBright.value = dim;
     petals.update(elapsed, player.position, dt);
     smoke.update(elapsed);
     lanternSway.update(elapsed);
@@ -772,6 +919,9 @@ async function boot() {
       tris: chunks.triangles,
     });
     rpgHud.update(dt);
+    touch?.update(playing);
+    settingsUI.update(fps);
+    governor.update(rawDt, state.mode === "play" || state.mode === "title");
   }
 
   loop();
@@ -810,6 +960,13 @@ async function boot() {
     dummies,
     save,
     events,
+    graphics,
+    governor,
+    settingsUI,
+    touch,
+    touchMode,
+    fullscreen,
+    openSettings,
     BLOCKS,
     ITEMS,
     dropForBlock,
@@ -822,6 +979,8 @@ async function boot() {
       menus.hideTitle();
       state.mode = "play";
       syncHeld();
+      // 触屏：直接由触屏层接管（键鼠这里不请求指针锁定 —— 没有手势会被拒绝并进入暂停）
+      if (touchMode) lockPointer();
       return true;
     },
     applySave,
@@ -829,7 +988,7 @@ async function boot() {
       daynight.time = t;
       daynight.playing = false;
       daynight.sample(t);
-      renderer.setSunDir(daynight.state.sunDir);
+      renderer.setSunDir(daynight.state.lightDir);
       renderer.applyDayNight(daynight.state, sky);
     },
     teleport(x, y, z, yaw, pitch) {
@@ -872,16 +1031,12 @@ async function boot() {
       player.targetPitch = player.pitch;
       chunks.update(player.position, true);
     },
+    /** 切换画质档位（"auto" | "low" | "medium" | "high" | "ultra"），返回生效的配置。 */
     setQuality(level) {
-      const p = chunks.setQuality(level);
-      const shadow = level === "low" ? 1024 : level === "medium" ? 1536 : 2048;
-      renderer.sun.shadow.mapSize.set(shadow, shadow);
-      if (renderer.sun.shadow.map) {
-        renderer.sun.shadow.map.dispose();
-        renderer.sun.shadow.map = null;
-      }
-      renderer.bloom.enabled = level !== "low";
-      return p;
+      graphics.setMode(level);
+      applyGraphics(graphics.profile);
+      settingsUI.sync();
+      return graphics.profile;
     },
     hideHud(v) {
       document.getElementById("hud").style.display = v ? "none" : "";
@@ -919,6 +1074,8 @@ async function boot() {
     runRpgTests: () => runSuite(RPG_TEST_SOURCE),
     /** 运行居民导航与行为测试。 */
     runNpcTests: () => runSuite(NPC_TEST_SOURCE),
+    /** 运行基础体验测试（光照 / 阴影 / 画质 / 蹲下疾跑 / 触屏 / 设置窗口 / 自动降档）。 */
+    runUxTests: () => runSuite(UX_TEST_SOURCE),
   };
 
   /**

@@ -17,6 +17,7 @@ const PETAL_VERT = /* glsl */ `
   attribute vec3 aColor;
   attribute float aAlpha;
   uniform float uTime;
+  uniform float uPx; // 每「设计像素」对应的绘制缓冲区像素数（渲染分辨率 × 屏幕高度 / 900）
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
@@ -27,8 +28,11 @@ const PETAL_VERT = /* glsl */ `
     pos.z += sin(ang) * 0.1;
     vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = aSize * 300.0 / max(-mv.z, 1.0);
-    vAlpha = aAlpha;
+    float d = max(-mv.z, 0.1);
+    // 透视缩放 + 上限：贴着镜头飘过的花瓣不会变成满屏的大圆斑；换画质（分辨率）时大小不变
+    gl_PointSize = min(aSize * 150.0 / d, 14.0) * uPx;
+    // 离镜头 1.5 格以内淡出
+    vAlpha = aAlpha * smoothstep(0.6, 1.5, d);
   }
 `;
 
@@ -36,18 +40,21 @@ const PETAL_FRAG = /* glsl */ `
   precision highp float;
   varying vec3 vColor;
   varying float vAlpha;
+  uniform float uBright;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c * vec2(1.0, 1.7));
     if (d > 0.5) discard;
     float edge = smoothstep(0.5, 0.34, d);
-    gl_FragColor = vec4(vColor, vAlpha * edge * 0.92);
+    gl_FragColor = vec4(vColor * uBright, vAlpha * edge * 0.92);
   }
 `;
 
 export class PetalField {
   constructor(scene, count = 900, opts = {}) {
     this.count = count;
+    // 实际模拟 / 绘制的数量（画质档位按密度缩减，CPU 模拟与绘制一起省）
+    this.active = count;
     this.range = opts.range ?? 26;
     this.world = opts.world;
 
@@ -89,7 +96,8 @@ export class PetalField {
     geo.setAttribute("aAlpha", this.alphaAttr);
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
-    this.uniforms = { uTime: { value: 0 } };
+    // uBright：花瓣不受场景光照，夜里由 main.js 按昼夜压暗（否则满屏发亮的白点像雪）
+    this.uniforms = { uTime: { value: 0 }, uBright: { value: 1 }, uPx: { value: 1 } };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
       vertexShader: PETAL_VERT,
@@ -123,7 +131,7 @@ export class PetalField {
     const w = this.world;
     const t = elapsed;
 
-    for (let i = 0; i < this.count; i++) {
+    for (let i = 0; i < this.active; i++) {
       this.alpha[i] = Math.min(1, this.alpha[i] + dt * 1.4);
 
       this.py[i] -= this.fall[i] * dt;
@@ -156,6 +164,12 @@ export class PetalField {
     this.alphaAttr.needsUpdate = true;
     this.uniforms.uTime.value = t;
   }
+
+  /** 画质：粒子密度 0..1 */
+  setDensity(f) {
+    this.active = Math.max(1, Math.round(this.count * f));
+    this.points.geometry.setDrawRange(0, this.active);
+  }
 }
 
 /* ---------------- 香炉烟雾 ---------------- */
@@ -181,12 +195,13 @@ const SMOKE_VERT = /* glsl */ `
 const SMOKE_FRAG = /* glsl */ `
   precision highp float;
   varying float vAlpha;
+  uniform float uBright;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c);
     if (d > 0.5) discard;
     float a = smoothstep(0.5, 0.0, d) * vAlpha;
-    gl_FragColor = vec4(0.92, 0.90, 0.86, a);
+    gl_FragColor = vec4(vec3(0.92, 0.90, 0.86) * uBright, a);
   }
 `;
 
@@ -215,7 +230,7 @@ export class SmokeField {
     geo.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
     geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
 
-    this.uniforms = { uTime: { value: 0 } };
+    this.uniforms = { uTime: { value: 0 }, uBright: { value: 1 } };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
       vertexShader: SMOKE_VERT,
@@ -335,6 +350,11 @@ export class SkyLanterns {
     // 只在傍晚到黎明之间出现
     this.uniforms.uVisible.value = Math.max(0, Math.min(1, (night - 0.25) / 0.5));
     this.points.visible = this.uniforms.uVisible.value > 0.01;
+  }
+
+  /** 画质：粒子密度 0..1 */
+  setDensity(f) {
+    this.points.geometry.setDrawRange(0, Math.max(1, Math.round(this.count * f)));
   }
 }
 
@@ -513,6 +533,7 @@ const MOTE_FRAG = /* glsl */ `
 export class WaterMotes {
   constructor(scene, count = 700, range = 13) {
     this.range = range;
+    this.count = count;
 
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
@@ -559,5 +580,10 @@ export class WaterMotes {
     this.uniforms.uOrigin.value.copy(camera.position);
     this.uniforms.uOpacity.value = underwaterBlend * 0.85;
     this.points.visible = underwaterBlend > 0.02;
+  }
+
+  /** 画质：粒子密度 0..1 */
+  setDensity(f) {
+    this.points.geometry.setDrawRange(0, Math.max(1, Math.round(this.count * f)));
   }
 }

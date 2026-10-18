@@ -32,7 +32,6 @@ export class HUD {
       overlay: document.getElementById("overlay"),
       pause: document.getElementById("pause"),
       crosshair: document.getElementById("crosshair"),
-      settings: document.getElementById("settings"),
       hotbar: document.getElementById("hotbar"),
       itemname: document.getElementById("itemname"),
       minimap: document.getElementById("minimap"),
@@ -54,7 +53,6 @@ export class HUD {
     this._buildStaticLabels();
     this._bindTime();
     this._bindKeys();
-    this._bindSettings();
 
     const mmCanvas = document.getElementById("minimap-canvas");
     this.minimap = world ? new Minimap(world, player, mmCanvas) : null;
@@ -74,10 +72,6 @@ export class HUD {
       mode: attachPixelText(document.getElementById("s-mode"), { color: C.gold, scale: 1, initial: "FIRST PERSON" }),
       chunk: attachPixelText(document.getElementById("s-chunk"), { color: C.gold, scale: 1, initial: "--" }),
       clock: attachPixelText(document.getElementById("t-clock"), { color: C.gold, scale: 2, initial: "06:00" }),
-      sens: attachPixelText(document.getElementById("v-sens"), { color: C.gold, scale: 1, initial: "1.0" }),
-      fov: attachPixelText(document.getElementById("v-fov"), { color: C.gold, scale: 1, initial: "72" }),
-      musicvol: attachPixelText(document.getElementById("v-musicvol"), { color: C.gold, scale: 1, initial: "80%" }),
-      sfxvol: attachPixelText(document.getElementById("v-sfxvol"), { color: C.gold, scale: 1, initial: "100%" }),
       chunkprog: attachPixelText(document.getElementById("chunkprog"), { color: C.jade, scale: 1, initial: "" }),
       itemname: attachPixelText(document.getElementById("itemname"), { color: C.gold, scale: 2, initial: "" }),
       loadmsg: attachPixelText(document.getElementById("loadmsg"), { color: C.jade, scale: 1, initial: "PREPARING..." }),
@@ -93,24 +87,6 @@ export class HUD {
     this.btnSpeed = document.getElementById("btn-speed");
     this._refreshTimeButtons();
 
-    // 设置面板
-    say("t-settings", "SETTINGS", { color: C.gold, scale: 2 });
-    say("l-quality", "QUALITY", { scale: 1 });
-    say("q-low", "LOW", { scale: 1 });
-    say("q-medium", "MED", { scale: 1 });
-    say("q-high", "HIGH", { scale: 1 });
-    say("q-ultra", "ULTRA", { scale: 1 });
-    say("l-sens", "SENSITIVITY", { scale: 1 });
-    say("l-fov", "FIELD OF VIEW", { scale: 1 });
-    say("l-bob", "HEAD BOB", { scale: 1 });
-    say("l-shadow", "SHADOWS", { scale: 1 });
-    say("l-bloom", "BLOOM", { scale: 1 });
-    say("l-audio", "AUDIO", { color: C.gold, scale: 1 });
-    say("l-musicvol", "MUSIC VOLUME", { scale: 1 });
-    say("l-sfxvol", "SFX VOLUME", { scale: 1 });
-    say("l-music", "MUSIC (REMOVED)", { scale: 1 });
-    say("l-sfx", "SOUND FX", { scale: 1 });
-    document.querySelector('#settings .tiers button[data-q="high"]')?.classList.add("on");
 
     // 小地图
     say("t-map", "MAP", { color: C.gold, scale: 1 });
@@ -189,86 +165,10 @@ export class HUD {
     });
   }
 
-  /* ---------------- 设置 ---------------- */
-  _bindSettings() {
-    const player = this.player;
-    document.querySelectorAll("#settings .tiers button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll("#settings .tiers button").forEach((b) => b.classList.remove("on"));
-        btn.classList.add("on");
-        if (this.onQuality) this.onQuality(btn.dataset.q);
-        this.showItemName(`QUALITY ${btn.dataset.q.toUpperCase()}`);
-        this.audio?.uiClick();
-      });
-    });
-    const sens = document.getElementById("r-sens");
-    sens.addEventListener("input", () => {
-      const v = Number(sens.value);
-      player.sensitivity = 0.0022 * v;
-      this.dyn.sens.set(v.toFixed(1));
-    });
-    const fov = document.getElementById("r-fov");
-    fov.addEventListener("input", () => {
-      const v = Number(fov.value);
-      player.baseFov = v;
-      this.dyn.fov.set(String(v));
-    });
-    const toggle = (id, fn) => {
-      const node = document.getElementById(id);
-      node.addEventListener("click", () => {
-        node.classList.toggle("on");
-        fn(node.classList.contains("on"));
-        this.audio?.uiClick();
-      });
-    };
-    toggle("t-bob", (on) => { player.headBob = on; });
-    toggle("t-shadow", (on) => { if (this.onShadow) this.onShadow(on); });
-    toggle("t-bloom", (on) => { if (this.onBloom) this.onBloom(on); });
-
-    // 音频：音乐 / 音效各自开关与音量
-    document.getElementById("r-musicvol").addEventListener("input", (e) => {
-      this.audio?.setMusicVol(Number(e.target.value));
-      this._updateAudioReadout();
-    });
-    document.getElementById("r-sfxvol").addEventListener("input", (e) => {
-      this.audio?.setSfxVol(Number(e.target.value));
-      this._updateAudioReadout();
-    });
-    toggle("t-music", (on) => { this.audio?.setMusicOn(on); this._updateAudioReadout(); });
-    toggle("t-sfx", (on) => { this.audio?.setSfxOn(on); this._updateAudioReadout(); });
-  }
-
-  _updateAudioReadout() {
-    const a = this.audio;
-    if (!a) return;
-    const s = a.settings;
-    // BGM 已移除：音乐读数恒为 OFF，不再显示音量百分比
-    this.dyn.musicvol?.set("OFF");
-    this.dyn.sfxvol?.set(s.sfxOn ? Math.round(s.sfxVol * 100) + "%" : "OFF");
-  }
-
-  /** 把界面同步到（可能持久化的）音频设置。 */
-  syncAudioSettings() {
-    const a = this.audio;
-    if (!a) return;
-    const s = a.settings;
-    const mv = document.getElementById("r-musicvol");
-    const sv = document.getElementById("r-sfxvol");
-    if (mv) mv.value = String(s.musicVol);
-    if (sv) sv.value = String(s.sfxVol);
-    document.getElementById("t-music")?.classList.toggle("on", s.musicOn);
-    document.getElementById("t-sfx")?.classList.toggle("on", s.sfxOn);
-    this._updateAudioReadout();
-  }
-
-  toggleSettings() {
-    this.el.settings.classList.toggle("open");
-  }
-
   /* ---------------- 键盘 ---------------- */
   _bindKeys() {
     window.addEventListener("keydown", (e) => {
-      if (!this.player.locked) return;
+      if (!this.player.engaged) return;
       const riding = this.mount && this.mount.active;
       if (e.code.startsWith("Digit") && !riding) {
         const n = Number(e.code.slice(5));
@@ -287,7 +187,6 @@ export class HUD {
         e.preventDefault();
         document.body.classList.toggle("debug");
       }
-      if (e.code === "KeyO") this.toggleSettings();
       if (e.code === "KeyM" && this.minimap) {
         this.minimap.visible = !this.minimap.visible;
         this.el.minimap.style.display = this.minimap.visible ? "" : "none";
@@ -295,7 +194,7 @@ export class HUD {
       }
     });
     window.addEventListener("wheel", (e) => {
-      if (!this.player.locked || !this.inventory || (this.mount && this.mount.active)) return;
+      if (!this.player.engaged || !this.inventory || (this.mount && this.mount.active)) return;
       this.inventory.select(this.inventory.selected + (e.deltaY > 0 ? 1 : -1));
       const def = this.inventory.selectedItem;
       if (def) this.showItemName(def.label);
@@ -330,8 +229,9 @@ export class HUD {
     }
   }
 
-  setLocked(locked) {
-    this.el.crosshair.classList.toggle("hidden", !locked || this.player.mode === "orbit");
+  /** 准星：正在操控角色时显示（键鼠 = 指针锁定，触屏 = 游戏进行中）；自由环绕视角不显示。 */
+  setLocked(engaged) {
+    this.el.crosshair.classList.toggle("hidden", !engaged || this.player.mode === "orbit");
   }
 
   setLoading(pct, msg) {

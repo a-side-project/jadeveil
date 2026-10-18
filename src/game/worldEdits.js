@@ -50,18 +50,28 @@ export class WorldEdits {
     return { palette, list };
   }
 
-  /** 读档：在生成好的世界上重放差量。未知方块名（版本差异）跳过。 */
+  /**
+   * 读档：在生成好的世界上重放差量。未知方块名（版本差异）跳过。
+   * 差量多时光照不逐格增量更新，重放完整体重算一次（见 LightEngine.batch）。
+   */
   load(data) {
     if (!data || !Array.isArray(data.list) || !Array.isArray(data.palette)) return 0;
     const ids = data.palette.map((n) => (n in BLOCK_ID ? BLOCK_ID[n] : -1));
-    let n = 0;
-    for (let i = 0; i + 3 < data.list.length; i += 4) {
-      const x = data.list[i], y = data.list[i + 1], z = data.list[i + 2], p = data.list[i + 3];
-      const id = ids[p];
-      if (id === undefined || id < 0 || !Number.isFinite(x)) continue;
-      this.set(x, y, z, id);
-      n++;
-    }
+    const replay = () => {
+      let n = 0;
+      for (let i = 0; i + 3 < data.list.length; i += 4) {
+        const x = data.list[i], y = data.list[i + 1], z = data.list[i + 2], p = data.list[i + 3];
+        const id = ids[p];
+        if (id === undefined || id < 0 || !Number.isFinite(x)) continue;
+        this.set(x, y, z, id);
+        n++;
+      }
+      return n;
+    };
+    const L = this.world.lighting;
+    if (!L || data.list.length / 4 < 400) return replay();
+    const n = L.batch(replay);
+    if (n) this.world.markAllDirty();
     return n;
   }
 }

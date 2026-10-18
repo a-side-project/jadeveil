@@ -2,7 +2,7 @@
   "id": "/",
   "name": "JADEVEIL — A Voxel Realm of Mist and Jade",
   "short_name": "JADEVEIL",
-  "description": "A Minecraft-styled single-player RPG: a Chinese voxel capital, JJ in a red hood and a rideable Ender Dragon. Plays offline once installed.",
+  "description": "A voxel fantasy realm in the Minecraft render style. Its first city, the Jade City, is open now: explore as JJ, build, and ride an Ender Dragon. Plays offline once installed.",
   "lang": "en",
   "dir": "ltr",
   "start_url": "/?source=pwa",

@@ -1,8 +1,8 @@
 /**
  * 标题页与暂停菜单 —— 存档入口都在这里。
  *
- *   标题页：CONTINUE（有存档时，显示上次保存时间）/ NEW GAME / LOAD SAVE FILE
- *   暂停页：RESUME / SAVE GAME / EXPORT SAVE / LOAD SAVE FILE / SETTINGS / CONTROLS / TITLE SCREEN
+ *   标题页：CONTINUE（有存档时，显示上次保存时间）/ NEW GAME / LOAD SAVE FILE / SETTINGS
+ *   暂停页：RESUME / SAVE GAME / EXPORT SAVE / LOAD SAVE FILE / SETTINGS / CONTROLS / FULLSCREEN / TITLE SCREEN
  *
  * 只负责界面与按钮，具体动作由 main.js 注入的回调完成。
  */
@@ -12,13 +12,6 @@ const C = { gold: "#ffe08a", goldDeep: "#a8731f", bone: "#f2e6cf", jade: "#6fc0a
 
 export const BRAND = "JADEVEIL";
 export const TAGLINE = "A VOXEL REALM OF MIST AND JADE";
-
-const CONTROLS = [
-  ["WASD", "MOVE"], ["SPACE", "JUMP / ASCEND"], ["SHIFT", "SPRINT"],
-  ["LMB", "ATTACK / BREAK"], ["RMB", "PLACE / TORCH"], ["1-9 / WHEEL", "SELECT ITEM"],
-  ["E", "INVENTORY"], ["F", "SUMMON / DISMISS DRAGON"], ["1-4 MOUNTED", "DRAGON SKILLS"],
-  ["V", "CAMERA"], ["T", "TIME SPEED"], ["F3", "DEBUG INFO"], ["ESC", "PAUSE"],
-];
 
 function fmtTime(ms) {
   const d = new Date(ms);
@@ -48,7 +41,6 @@ export class Menus {
       .menu .btnrow button.dis { filter: grayscale(1) brightness(0.55); cursor: default; }
       .menu .meta { min-height: 14px; margin-top: -4px; }
       .menu .msg { min-height: 16px; }
-      .controls { display: grid; grid-template-columns: auto auto; gap: 6px 22px; margin-top: 8px; }
       #overlay { cursor: default !important; }
     `;
     document.head.appendChild(s);
@@ -59,7 +51,9 @@ export class Menus {
     row.className = "btnrow";
     const b = document.createElement("button");
     // 稳定 id（文字是 canvas 像素字，自动化与无障碍都靠它）：btn-new-game、btn-continue ...
-    b.id = `btn-${label.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "")}`;
+    // 标题页与暂停页有同名按钮（SETTINGS / LOAD SAVE FILE）：暂停页的加 pause- 前缀，保证 id 唯一
+    const slug = label.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
+    b.id = document.getElementById(`btn-${slug}`) || parent.closest?.("#pause") ? `btn-pause-${slug}` : `btn-${slug}`;
     b.setAttribute("aria-label", label);
     setPixelText(b, label, { color, scale: 2, center: true });
     b.addEventListener("click", (e) => {
@@ -102,6 +96,7 @@ export class Menus {
     menu.appendChild(this.continueMeta);
     this.btnNew = this._btn(menu, "NEW GAME", () => this._newGame());
     this._btn(menu, "LOAD SAVE FILE", () => this.cb.onLoadFile());
+    this._btn(menu, "SETTINGS", () => this.cb.onSettings());
     this.install = [this._installEntry(menu)];
     this.titleMsg = document.createElement("div");
     this.titleMsg.className = "msg";
@@ -163,26 +158,22 @@ export class Menus {
     this._btn(menu, "LOAD SAVE FILE", () => this.cb.onLoadFile());
     this.install.push(this._installEntry(menu));
     this._btn(menu, "SETTINGS", () => this.cb.onSettings());
-    this.btnControls = this._btn(menu, "CONTROLS", () => this._toggleControls());
+    this._btn(menu, "CONTROLS", () => this.cb.onControls());
+    // 全屏：浏览器支持时才出现（iPhone Safari 不支持网页全屏，那里靠「添加到主屏幕」）
+    this.btnFullscreen = this._btn(menu, "FULLSCREEN", () => this.cb.onFullscreen());
+    if (!document.fullscreenEnabled) this.btnFullscreen.parentElement.style.display = "none";
+    document.addEventListener("fullscreenchange", () => {
+      setPixelText(this.btnFullscreen, document.fullscreenElement ? "EXIT FULLSCREEN" : "FULLSCREEN", { color: C.bone, scale: 2, center: true });
+    });
     this._btn(menu, "SAVE AND QUIT TO TITLE", () => this.cb.onQuitTitle());
     this.pauseMsg = document.createElement("div");
     this.pauseMsg.className = "msg";
     menu.appendChild(this.pauseMsg);
-
-    this.controls = document.createElement("div");
-    this.controls.className = "controls";
-    this.controls.style.display = "none";
-    for (const [k, v] of CONTROLS) {
-      const a = document.createElement("div");
-      setPixelText(a, k, { color: C.gold, scale: 1 });
-      const b = document.createElement("div");
-      setPixelText(b, v, { color: C.bone, scale: 1 });
-      this.controls.append(a, b);
-    }
-    menu.appendChild(this.controls);
-    // 暂停页背景点击 = 继续（与原来的行为一致）
+    // 暂停页背景点击 = 继续（与原来的行为一致）。
+    // 防「幽灵点击」：触屏上按下 MENU 的瞬间暂停页就出现在手指下面，抬手时浏览器补发的 click
+    // 会落在背景上把暂停立刻取消 —— 所以暂停页出现后 500ms 内不响应背景点击。
     pause.addEventListener("click", (e) => {
-      if (e.target === pause) this.cb.onResume();
+      if (e.target === pause && performance.now() - this._pauseShownAt > 500) this.cb.onResume();
     });
   }
 
@@ -207,15 +198,12 @@ export class Menus {
     }
   }
 
-  _toggleControls() {
-    this.controls.style.display = this.controls.style.display === "none" ? "grid" : "none";
-  }
-
   pauseMessage(text, color = C.jade) {
     setPixelText(this.pauseMsg, text, { color, scale: 1, center: true });
   }
 
   showPause() {
+    this._pauseShownAt = performance.now();
     this.pauseMessage("");
     document.getElementById("pause").classList.add("open");
   }

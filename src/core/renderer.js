@@ -257,6 +257,23 @@ export class Renderer {
     );
     this.camera.position.set(0, 46, 96);
 
+    // 画质开关（applyQuality 写入）。关掉的效果连对应的场景重绘一起跳过，而不只是不显示。
+    this.pixelRatio = Math.min(window.devicePixelRatio, 2);
+    this.bloomOn = true;
+    this.godraysOn = true;
+    this.reflectOn = true;
+    this.reflectScale = 0.5;
+    // 本帧体积光是否有贡献（太阳在屏外 / 夜里时整遍遮罩渲染都可以省掉）
+    this._godrayActive = true;
+    // 由 main.js 注入：视野里有没有水面（没有就不渲染反射）
+    this.isWaterVisible = null;
+    // 烘焙光照（world/lighting.js）的换算参数：所有体素材质与实体材质共用同一组 uniform 对象
+    this.lightUniforms = {
+      uSkyFloor: { value: 0.36 }, // 完全不见天日处的亮度下限（洞穴 / 屋子深处仍看得清轮廓）
+      uBlockColor: { value: new THREE.Color(1.0, 0.70, 0.40) }, // 灯笼 / 火把的暖光
+      uBlockStrength: { value: 0.6 }, // 随昼夜变化（applyDayNight）
+    };
+
     this._setupLights();
     this._setupComposer();
     this._setupMaterials();
@@ -298,14 +315,8 @@ export class Renderer {
     this.fill.position.set(-40, 30, -50);
     scene.add(this.fill);
 
-    // 灯笼点光源池（跟随玩家附近的灯笼，做数量预算）
-    this.lanternLights = [];
-    for (let i = 0; i < 8; i++) {
-      const l = new THREE.PointLight(0xffa64d, 0, 16, 2);
-      l.castShadow = false;
-      scene.add(l);
-      this.lanternLights.push(l);
-    }
+    // 灯笼 / 火把不再用实时点光源：它们的光烘焙在体素光照里（world/lighting.js）——
+    // 不穿墙、没有数量上限、不会在灯之间换手闪烁，也不给每个像素增加着色开销。
 
     // 月光：夜间从月亮方向补一道冷光，让轮廓可读
     this.moon = new THREE.DirectionalLight(0x8fb0ff, 0);
@@ -383,7 +394,7 @@ export class Renderer {
 
     // FXAA 抗锯齿（composer 渲染到 render target 时 MSAA 失效，这里补上）
     this.fxaa = new ShaderPass(FXAAShader);
-    this.fxaa.uniforms.uResolution.value.set(1 / window.innerWidth, 1 / window.innerHeight);
+    this.fxaa.uniforms.uResolution.value.set(1 / (window.innerWidth * pr), 1 / (window.innerHeight * pr));
     this.composer.addPass(this.fxaa);
 
     this.output = new OutputPass();
@@ -406,18 +417,22 @@ export class Renderer {
         mat.userData.shader = shader;
         this._causticShaders.push(shader);
 
+        Object.assign(shader.uniforms, this.lightUniforms);
         shader.vertexShader = shader.vertexShader
           .replace(
             "#include <common>",
             `#include <common>
              attribute float aEmissive;
+             attribute vec2 aLight;
              varying float vEmissive;
+             varying vec2 vLight;
              varying vec3 vCWorld;`,
           )
           .replace(
             "#include <begin_vertex>",
             `#include <begin_vertex>
              vEmissive = aEmissive;
+             vLight = aLight;
              vCWorld = (modelMatrix * vec4(position, 1.0)).xyz;`,
           );
 
@@ -426,8 +441,13 @@ export class Renderer {
             "#include <common>",
             `#include <common>
              varying float vEmissive;
+             varying vec2 vLight;
              varying vec3 vCWorld;
              uniform float uEmissiveBoost;
+             uniform float uSkyFloor;
+             uniform vec3 uBlockColor;
+             uniform float uBlockStrength;
+             vec3 jvAlbedo;
              uniform float uTime;
              uniform float uWaterLevel;
              uniform float uCausticStrength;
@@ -456,9 +476,20 @@ export class Renderer {
              }`,
           )
           .replace(
+            "#include <color_fragment>",
+            `#include <color_fragment>
+             // 烘焙光照：天空光决定这一面能分到多少太阳 / 天空光（屋里、檐下、洞里逐格变暗）
+             jvAlbedo = diffuseColor.rgb;
+             diffuseColor.rgb *= mix(uSkyFloor, 1.0, pow(vLight.x, 1.5));`,
+          )
+          .replace(
             "#include <emissivemap_fragment>",
             `#include <emissivemap_fragment>
-             totalEmissiveRadiance += diffuseColor.rgb * vEmissive * uEmissiveBoost * 2.2;
+             // 发光体本身：保留纸灯笼的橙红色（系数过大时色调映射会把它压成一团白）
+             totalEmissiveRadiance += jvAlbedo * vEmissive * uEmissiveBoost * 0.85;
+             // 方块光：灯笼 / 火把的暖光，按光照等级平滑衰减（1.35 次方：近处亮、远处收尾长而柔和）；
+             // 发光体自己的面不再叠加，避免双重提亮
+             totalEmissiveRadiance += jvAlbedo * uBlockColor * pow(vLight.y, 1.35) * uBlockStrength * (1.0 - vEmissive);
 
              // 只要片元在水面以下就投焦散，与相机在哪无关：
              // 从岸上看水里时湖底的那张亮网也是同一个效果。
@@ -473,7 +504,7 @@ export class Renderer {
              }`,
           );
       };
-      mat.customProgramCacheKey = () => "voxel-emissive-caustic";
+      mat.customProgramCacheKey = () => "voxel-emissive-caustic-light";
       return mat;
     };
 
@@ -536,18 +567,30 @@ export class Renderer {
     // 非泛光 mesh → 纯黑（官方做法）
     this._darkMaterial = new THREE.MeshBasicMaterial({ color: "black" });
 
-    // 体素网格 → 只输出自发光（aEmissive > 0 的面才亮）
+    // 体素网格 → 只输出自发光（aEmissive > 0 的面才亮）。
+    // 泛光的颜色必须来自发光体自己的贴图：旧版输出纯白（vec3(vEmissive * 3.0)），
+    // 于是纸灯笼的光晕是白的，近看时一大片白光叠上去直接过曝（实测灯笼前 7.7% 的像素被压成纯白）。
     this._glowMaterial = new THREE.ShaderMaterial({
+      uniforms: { map: { value: null }, uGlow: { value: 1 } },
       vertexShader: /* glsl */ `
         attribute float aEmissive;
         varying float vEmissive;
+        varying vec2 vUv;
         void main() {
           vEmissive = aEmissive;
+          vUv = uv;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }`,
       fragmentShader: /* glsl */ `
+        uniform sampler2D map;
+        uniform float uGlow;
         varying float vEmissive;
-        void main() { gl_FragColor = vec4(vec3(vEmissive * 3.0), 1.0); }`,
+        varying vec2 vUv;
+        void main() {
+          vec4 t = texture2D(map, vUv);
+          if (t.a < 0.5) discard; // 镂空灯笼的透明像素不发光
+          gl_FragColor = vec4(t.rgb * vEmissive * uGlow, 1.0);
+        }`,
     });
 
     this._savedMaterial = {};
@@ -677,6 +720,7 @@ export class Renderer {
       m.map = texture;
       m.needsUpdate = true;
     }
+    this._glowMaterial.uniforms.map.value = texture;
   }
 
   /** 应用法线图 / 粗糙度图，拉开材质「手感」差异。 */
@@ -693,16 +737,17 @@ export class Renderer {
 
   /** 每帧根据昼夜状态更新光照、雾、天空、曝光。 */
   applyDayNight(st, sky) {
-    this.sun.color.copy(st.sunColor);
-    this.sun.intensity = st.sunIntensity;
+    // 主光源：白天是太阳、夜里是月亮（方向由 setSunDir(st.lightDir) 给出）
+    this.sun.color.copy(st.lightColor);
+    this.sun.intensity = st.lightIntensity;
     this.hemi.color.copy(st.hemiSky);
     this.hemi.groundColor.copy(st.hemiGround);
     this.hemi.intensity = st.hemiIntensity;
     this.ambient.intensity = 0.10 + st.hemiIntensity * 0.10;
     this.fill.intensity = 0.10 + st.hemiIntensity * 0.16;
 
-    // 月光：夜间补一道冷光，让建筑轮廓可读
-    this.moon.intensity = st.night * 0.55;
+    // 夜间的冷色补光：月亮已经是主光源（带阴影），这里只留一点让背光面的轮廓可读
+    this.moon.intensity = st.night * 0.14;
     this.moon.color.setHex(0x8fb0ff);
 
     this.scene.fog.color.copy(st.fogColor);
@@ -716,33 +761,36 @@ export class Renderer {
     this.grade.uniforms.uSaturation.value = 1.16 + st.night * 0.10 + st.warm * 0.06;
     this.grade.uniforms.uContrast.value = 1.05 + st.warm * 0.05;
 
+    // 方块光：白天被阳光盖过，只在屋里 / 檐下看得出；入夜成为主光源
+    this.lightUniforms.uBlockStrength.value = 0.5 + st.night * 1.5 + st.warm * 0.35;
+
     // 自发光随昼夜曲线：白天几乎不发光，入夜拉满
-    const glow = 0.06 + st.night * 2.35 + st.warm * 0.35;
+    // 上限控制在色调映射还能保住颜色的范围内（浅色发光块超过约 1.6 就会被压成纯白）
+    const glow = 0.06 + st.night * 1.3 + st.warm * 0.25;
     this.emissiveBoost = glow;
+    // 泛光输入跟自发光同一条昼夜曲线：白天几乎没有光晕，入夜灯笼才有一圈暖光
+    this._glowMaterial.uniforms.uGlow.value = 0.2 + st.night * 0.8 + st.warm * 0.25;
     for (const m of [this.matOpaque, this.matCutout]) {
       if (m.userData.shader) m.userData.shader.uniforms.uEmissiveBoost.value = glow;
     }
 
     // 水面：太阳方向 / 天空色 / 昼夜
     if (this.waterUniforms) {
-      this.waterUniforms.uSunDir.value.copy(st.sunDir);
-      this.waterUniforms.uSunColor.value.copy(st.sunColor);
+      // 水面高光跟主光源走：夜里映出的是月亮
+      this.waterUniforms.uSunDir.value.copy(st.lightDir);
+      this.waterUniforms.uSunColor.value.copy(st.lightColor).multiplyScalar(Math.min(1, st.lightIntensity));
       this.waterUniforms.uSkyColor.value.copy(st.horizon);
       this.waterUniforms.uNight.value = st.night;
     }
 
     // bloom：只让灯笼 / 金瓦 / 水面高光溢出，阈值保持较高
     // 选择性泛光：泛光通道里只剩发光体，阈值设 0；强度随昼夜
-    this.bloom.strength = 0.9 + st.night * 0.9 + st.warm * 0.3;
-    this.bloom.radius = 0.55 + st.night * 0.30;
+    // 泛光要克制：只给发光体一圈紧凑的光晕，光主要体现在「照亮周围」（方块光），而不是画面一片白
+    this.bloom.strength = 0.45 + st.night * 0.45 + st.warm * 0.15;
+    this.bloom.radius = 0.35 + st.night * 0.15;
     if (this.bloomMix) this.bloomMix.uniforms.bloomStrength.value = 1.0;
 
-    if (sky) {
-      sky.set(
-        st.zenith, st.horizon, st.ground,
-        st.sunDir, st.sunColor, st.moonDir, st.night,
-      );
-    }
+    if (sky) sky.set(st);
 
     // 体积光参数随昼夜
     if (this.godrays) {
@@ -752,8 +800,11 @@ export class Renderer {
       // 这个系数是体积光唯一的「调子」旋钮：旧阀值卡在天空亮度上，
       // 实际上把光束本身也一起卡没了（旧版全图贡献仅 1% 像素），
       // 这里刻意取小值，使整体亮度与之前相近 —— 只去掉残影，不改变画面观感。
-      this.godrays.uniforms.uStrength.value = 0.04 + st.warm * 0.10;
-      this.godrays.uniforms.uSunTint.value.copy(st.sunColor);
+      // 光束只在太阳挂在天上时出现：落山后主光源换成月亮，若仍按旧的太阳色（暮光里是深红）
+      // 从月亮的位置往外推光束，整片天空会被涂成暗红色的放射条纹
+      const sunUp = Math.max(0, Math.min(1, (st.sunElevation + 0.02) / 0.1));
+      this.godrays.uniforms.uStrength.value = (0.04 + st.warm * 0.10) * sunUp;
+      this.godrays.uniforms.uSunTint.value.copy(st.lightColor);
       // updateWaterView() 需要它来算水下阈值，必须存下来
       this._nightFactor = st.night;
     }
@@ -775,18 +826,47 @@ export class Renderer {
     const v = this._sunScreenTmp || (this._sunScreenTmp = new THREE.Vector3());
     v.copy(this.camera.position).addScaledVector(this._sunDir, 400);
     v.project(this.camera);
-    this.godrays.uniforms.uSunScreen.value.set(v.x * 0.5 + 0.5, v.y * 0.5 + 0.5);
+    const sx = v.x * 0.5 + 0.5, sy = v.y * 0.5 + 0.5;
+    this.godrays.uniforms.uSunScreen.value.set(sx, sy);
+    // 与着色器里的判定一致：太阳不在屏幕内（或在相机背后）、或夜里强度几乎为 0 时，体积光没有任何贡献
+    const u = this.godrays.uniforms;
+    const onScreen = v.z < 1 && sx >= 0 && sx <= 1 && sy >= 0 && sy <= 1;
+    const amt = u.uStrength.value * (1 - u.uNight.value * 0.92) * (1 + u.uUnderwater.value * 1.15);
+    this._godrayActive = onScreen && amt > 0.004;
   }
 
-  /** 太阳方向光跟随玩家，保证阴影相机始终罩住视野。 */
+  /**
+   * 太阳方向光跟随玩家，保证阴影相机始终罩住视野。
+   *
+   * 阴影相机的位置按阴影贴图的纹素（texel）对齐：否则玩家每移动一点点，
+   * 整张阴影贴图就相对世界滑动不到一个纹素，所有阴影边缘都会跟着抖（shimmering）——
+   * 这是方向光阴影的经典问题，标准解法就是把投影中心吸附到纹素网格上。
+   */
   followSun(target) {
     const d = 110;
+    const sc = this.sun.shadow.camera;
+    const texel = (sc.right - sc.left) / this.sun.shadow.mapSize.x;
+    // 光空间基：forward = -sunDir；right / up 与之正交
+    const f = this._sunF || (this._sunF = new THREE.Vector3());
+    const r = this._sunR || (this._sunR = new THREE.Vector3());
+    const u = this._sunU || (this._sunU = new THREE.Vector3());
+    f.copy(this._sunDir).negate().normalize();
+    r.set(0, 1, 0).cross(f);
+    if (r.lengthSq() < 1e-6) r.set(1, 0, 0);
+    r.normalize();
+    u.copy(f).cross(r).normalize();
+    // 目标点在光空间的 right / up 坐标吸附到纹素网格，沿光线方向的分量不影响阴影位置
+    const t = this._sunT || (this._sunT = new THREE.Vector3());
+    const pr = Math.round(target.dot(r) / texel) * texel;
+    const pu = Math.round(target.dot(u) / texel) * texel;
+    const pf = target.dot(f);
+    t.copy(r).multiplyScalar(pr).addScaledVector(u, pu).addScaledVector(f, pf);
     this.sun.position.set(
-      target.x + this._sunDir.x * d,
-      target.y + this._sunDir.y * d + 12,
-      target.z + this._sunDir.z * d,
+      t.x + this._sunDir.x * d,
+      t.y + this._sunDir.y * d,
+      t.z + this._sunDir.z * d,
     );
-    this.sun.target.position.copy(target);
+    this.sun.target.position.copy(t);
     this.sun.target.updateMatrixWorld();
   }
 
@@ -804,26 +884,76 @@ export class Renderer {
     this.bloom.resolution.set(w, h);
     if (this.bloomComposer) this.bloomComposer.setSize(w, h);
     if (this.godrayRT) this.godrayRT.setSize(Math.max(2, Math.floor(w / 4)), Math.max(2, Math.floor(h / 4)));
-    if (this.fxaa) this.fxaa.uniforms.uResolution.value.set(1 / w, 1 / h);
+    const pr = this.pixelRatio;
+    if (this.fxaa) this.fxaa.uniforms.uResolution.value.set(1 / (w * pr), 1 / (h * pr));
     if (this.reflectRT) {
       this.reflectRT.setSize(
-        Math.max(2, Math.floor(w * 0.5)),
-        Math.max(2, Math.floor(h * 0.5)),
+        Math.max(2, Math.floor(w * this.reflectScale)),
+        Math.max(2, Math.floor(h * this.reflectScale)),
       );
     }
   }
 
+  /**
+   * 应用画质配置（见 core/quality.js）。阴影 / 灯光数量变化会触发一次着色器重编译，
+   * 只在玩家换档或自动降档时发生。
+   */
+  applyQuality(p) {
+    const r = this.renderer;
+    // 分辨率
+    this.pixelRatio = Math.min(window.devicePixelRatio || 1, p.pixelRatio);
+    r.setPixelRatio(this.pixelRatio);
+    this.composer.setPixelRatio(this.pixelRatio);
+    this.bloomComposer.setPixelRatio(this.pixelRatio);
+    // 阴影
+    const shadowChanged = r.shadowMap.enabled !== p.shadows || this.sun.shadow.mapSize.x !== p.shadowMap;
+    r.shadowMap.enabled = p.shadows;
+    this.sun.castShadow = p.shadows;
+    if (this.sun.shadow.mapSize.x !== p.shadowMap) {
+      this.sun.shadow.mapSize.set(p.shadowMap, p.shadowMap);
+      if (this.sun.shadow.map) {
+        this.sun.shadow.map.dispose();
+        this.sun.shadow.map = null;
+      }
+    }
+    // 泛光 / 体积光：pass 关掉的同时，render() 里对应的场景重绘也一并跳过
+    this.bloomOn = p.bloom;
+    this.bloomMix.enabled = p.bloom;
+    this.godraysOn = p.godrays;
+    // 水面反射：关掉时让水面只用天空色做菲涅尔反射
+    this.reflectOn = p.reflections;
+    this.reflectScale = p.reflectScale;
+    if (this.waterUniforms && this.waterUniforms.uReflectStrength) {
+      if (this._reflectStrength === undefined) this._reflectStrength = this.waterUniforms.uReflectStrength.value;
+      this.waterUniforms.uReflectStrength.value = p.reflections ? this._reflectStrength : 0;
+    }
+    if (shadowChanged) {
+      this.scene.traverse((o) => {
+        if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; });
+      });
+    }
+    this.resize();
+  }
+
   render() {
-    this.renderReflection();
+    // 每一遍额外的场景重绘都要有贡献才做：
+    //   反射 —— 画质开启且视野里确实有水面
+    //   体积光遮罩 —— 画质开启且太阳在屏幕内、强度不为 0
+    //   泛光 —— 画质开启
+    if (this.reflectOn && (!this.isWaterVisible || this.isWaterVisible())) this.renderReflection();
     // 体积光的遮挡遮罩：必须在主画面之前重算（它会把场景里的材质临时换掉）
-    this._renderGodRayMask();
+    const rays = this.godraysOn && this._godrayActive;
+    this.godrays.enabled = rays;
+    if (rays) this._renderGodRayMask();
     // 选择性泛光（官方做法）：
     //   1) 把非发光体换黑（体素网格换成只输出自发光的材质）
     //   2) 独立 composer 只对这份「变暗场景」做 bloom
     //   3) 还原材质，主 composer 渲染完整场景并把泛光加回去
-    this.scene.traverse(this._darkenNonBloomed);
-    this.bloomComposer.render();
-    this.scene.traverse(this._restoreMaterial);
+    if (this.bloomOn) {
+      this.scene.traverse(this._darkenNonBloomed);
+      this.bloomComposer.render();
+      this.scene.traverse(this._restoreMaterial);
+    }
     this.composer.render();
   }
 
@@ -946,8 +1076,8 @@ export class Renderer {
     this.underwaterBlend = 0;
     this._fogTmp = new THREE.Color();
     this._reflLook = new THREE.Vector3();
-    const w = Math.max(2, Math.floor(window.innerWidth * 0.5));
-    const h = Math.max(2, Math.floor(window.innerHeight * 0.5));
+    const w = Math.max(2, Math.floor(window.innerWidth * this.reflectScale));
+    const h = Math.max(2, Math.floor(window.innerHeight * this.reflectScale));
     this.reflectRT = new THREE.WebGLRenderTarget(w, h, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
