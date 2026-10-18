@@ -35,12 +35,31 @@ const LOOK_GAIN = 2.4; // 触屏视角增益（相对鼠标灵敏度：手指一
 // 环形技能盘几何（以主按钮中心为原点，向左为负 x、向上为负 y）
 const MAIN = 88;
 const SLOT = 60;
-const RING_GAP = 6; // 按钮之间、按钮与小地图 / 屏幕边缘之间至少留的缝
-const ARC_FROM = 190; // 度：技能弧从主按钮左偏下开始，逆时针往右上走
+const RING_GAP = 8; // 按钮之间、按钮与小地图 / 屏幕边缘之间至少留的缝
+const ARC_FROM = 198; // 度：技能扇面从主按钮左偏下开始，逆时针往上走
 const SIDE_X = -190; // 建造模式（没有技能弧）时跳跃键的位置
 const JUMP = 72;
 
 const C = { gold: "#ffe08a", bone: "#f2e6cf", jade: "#6fc0ae", purple: "#e08aff" };
+const RING_W = 3; // 技能盘按钮的描边宽度（px）
+const PIX = 4; //    阶梯圆的台阶大小（px，和图标的像素放大倍数一致）
+
+/**
+ * 像素阶梯圆的 clip-path：按 PIX 大小的网格逐行算圆的半宽，沿右侧往下、左侧往上走出台阶轮廓。
+ * 项目全局禁止平滑圆角（pixelui：border-radius: 0），圆形按钮也必须是一格一格的。
+ */
+function pixelCircle(size) {
+  const n = Math.max(3, Math.round(size / PIX)), cell = size / n, R = n / 2;
+  const rows = [];
+  for (let k = 0; k < n; k++) {
+    const y = k + 0.5 - R;
+    rows.push(Math.min(R, Math.round(Math.sqrt(Math.max(0, R * R - y * y)))));
+  }
+  const pts = [];
+  for (let k = 0; k < n; k++) pts.push([(R + rows[k]) * cell, k * cell], [(R + rows[k]) * cell, (k + 1) * cell]);
+  for (let k = n - 1; k >= 0; k--) pts.push([(R - rows[k]) * cell, (k + 1) * cell], [(R - rows[k]) * cell, k * cell]);
+  return `polygon(${pts.map(([x, y]) => `${x.toFixed(2)}px ${y.toFixed(2)}px`).join(", ")})`;
+}
 
 export class TouchControls {
   /**
@@ -87,14 +106,24 @@ export class TouchControls {
       #touch .cluster { position: absolute; width: 0; height: 0;
         right: calc(26px + ${MAIN / 2}px + env(safe-area-inset-right));
         bottom: calc(22px + ${MAIN / 2}px + env(safe-area-inset-bottom)); }
-      #touch .cluster .tb { transform: translate(-50%, -50%); }
+      /* 技能盘里的按钮都是像素阶梯圆：圆形才能紧贴主按钮排成蜂窝扇面（方块沿弧线排，角会互相顶住，只能拉开、留出大片空白）。
+         外形：内层 .face 用 clip-path 裁成阶梯圆；描边：外层上下左右四个不带模糊的 drop-shadow 叠成一圈台阶描边。
+         只有 .face 接收触摸 —— 相邻按钮外接方框的角不会抢走点击 */
+      #touch .cluster .tb { transform: translate(-50%, -50%); background: none; border: none; box-shadow: none; pointer-events: none;
+        --ring: rgba(232, 180, 74, 0.8); --fill: rgba(10, 14, 18, 0.66);
+        filter: drop-shadow(${RING_W}px 0 0 var(--ring)) drop-shadow(-${RING_W}px 0 0 var(--ring)) drop-shadow(0 ${RING_W}px 0 var(--ring)) drop-shadow(0 -${RING_W}px 0 var(--ring)) drop-shadow(3px 3px 0 rgba(0, 0, 0, 0.5)); }
+      #touch .cluster .tb .face { position: absolute; inset: ${RING_W}px; display: flex; align-items: center; justify-content: center;
+        background: var(--fill); clip-path: var(--pc); pointer-events: auto; }
+      #touch .cluster .tb.down .face { background: rgba(232, 180, 74, 0.42); }
+      #touch .cluster .tb.on { --ring: #d6fff0; }
+      #touch .cluster .tb.on .face { background: rgba(111, 192, 174, 0.5); }
       #touch .cluster .tb.down { transform: translate(calc(-50% + 2px), calc(-50% + 2px)); }
-      #touch .main { width: ${MAIN}px; height: ${MAIN}px; border-width: 4px; border-color: #ffe08a; background: rgba(28, 22, 10, 0.7); }
-      #touch .main.mount { border-color: #e08aff; background: rgba(30, 10, 40, 0.7); }
-      #touch .main.adv { border-color: #9ff0d6; background: rgba(8, 30, 26, 0.7); }
-      #touch .skill { width: ${SLOT}px; height: ${SLOT}px; overflow: hidden; }
-      #touch .skill.mount { border-color: rgba(224, 138, 255, 0.85); }
-      #touch .skill.adv { border-color: rgba(111, 192, 174, 0.9); }
+      #touch .main { width: ${MAIN}px; height: ${MAIN}px; --ring: #ffe08a; --fill: rgba(28, 22, 10, 0.7); }
+      #touch .main.mount { --ring: #e08aff; --fill: rgba(30, 10, 40, 0.7); }
+      #touch .main.adv { --ring: #9ff0d6; --fill: rgba(8, 30, 26, 0.7); }
+      #touch .skill { width: ${SLOT}px; height: ${SLOT}px; }
+      #touch .skill.mount { --ring: rgba(224, 138, 255, 0.85); }
+      #touch .skill.adv { --ring: rgba(111, 192, 174, 0.9); }
       #touch .skill .sweep { position: absolute; inset: 0; pointer-events: none;
         background: conic-gradient(rgba(0,0,0,0.68) calc(var(--cd, 0) * 360deg), transparent 0); }
       #touch .skill .secs { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
@@ -124,9 +153,25 @@ export class TouchControls {
     b.className = `tb ${cls}`;
     b.setAttribute("role", "button");
     b.setAttribute("aria-label", label);
-    if (icon) b.appendChild(pixelCanvas(icon, legend, scale));
     parent.appendChild(b);
+    // 技能盘里的按钮：内容放进裁成阶梯圆的 .face（见 CSS）
+    b.face = b;
+    if (parent === this.cluster) {
+      const f = document.createElement("div");
+      f.className = "face";
+      b.appendChild(f);
+      b.face = f;
+      const w = b.getBoundingClientRect().width;
+      f.style.setProperty("--pc", pixelCircle(w > 0 ? w - 2 * RING_W : this._faceSize(cls)));
+    }
+    if (icon) b.face.appendChild(pixelCanvas(icon, legend, scale));
     return b;
+  }
+
+  /** 按钮还没显示（量不到尺寸）时，按 CSS 尺寸算 .face 的大小。 */
+  _faceSize(cls) {
+    const w = /main/.test(cls) ? MAIN : /skill/.test(cls) ? SLOT : /jump/.test(cls) ? JUMP : 54;
+    return w - 2 * RING_W;
   }
 
   _build() {
@@ -176,12 +221,11 @@ export class TouchControls {
   }
 
   /**
-   * 技能盘布局：沿主按钮左上方的椭圆弧从左下往右上走，每颗技能放在第一个满足全部约束的位置——
-   *   · 不和已放的技能、主按钮重叠（按钮是方的：看横、纵两个方向上的最大距离，而不是圆心距 ——
-   *     沿对角线排的两颗方块，圆心距够了，角还是压在一起）
-   *   · 整颗在屏幕内、不压小地图
-   * 放不下就把椭圆横向拉宽再试。按真实屏幕尺寸算：固定半径的正圆弧在 375 高的手机上，
-   * 五颗技能要么互相压住、要么顶进小地图。屏幕尺寸变化时重算（update 里检测）。
+   * 技能盘布局：蜂窝扇面 —— 内圈紧贴主按钮，外圈每颗插在内圈两颗之间（手游通行的做法）。
+   *   内圈半径 R1 = 主按钮半径 + 缝 + 技能半径；相邻两颗圆心距 = 技能直径 + 缝
+   *   外圈半径 R2：插在内圈两颗中间时，到两边的圆心距也恰好是「直径 + 缝」
+   * 所有候选位置都检查：整颗在屏幕内、不压小地图、不和已放的按钮重叠；按角度从左下往上排
+   * （和键盘 2 3 4 5 Q 的顺序一致）。屏幕尺寸变化时重算（update 里检测）。
    */
   _layoutRing() {
     const n = this.slots.length;
@@ -193,32 +237,38 @@ export class TouchControls {
     const vw = window.innerWidth, vh = window.innerHeight;
     const mm = document.getElementById("minimap");
     const mmr = mm && mm.offsetParent ? mm.getBoundingClientRect() : null;
-    const H = SLOT / 2, need = SLOT + RING_GAP, mainNeed = MAIN / 2 + RING_GAP + H;
-    // 纵向半径：往上最多到小地图底下；大屏也不超过 150（拇指够得着）
-    const ceil = (mmr ? mmr.bottom : 0) + RING_GAP + H;
-    const Ry = Math.max(mainNeed, Math.min(150, cy - ceil));
+    // 尺寸按实际渲染测量（含边框）：CSS 里的 SLOT / MAIN 不含边框，按它们算间距会少 6~8px，按钮互相压住
+    const H = this.slots[0].el.getBoundingClientRect().width / 2, pitch = 2 * H + RING_GAP;
+    const R1 = mr.width / 2 + RING_GAP + H;
+    const step = 2 * Math.asin(pitch / 2 / R1); // 内圈相邻两颗的角距（弧度）
+    const half = step / 2;
+    const R2 = R1 * Math.cos(half) + Math.sqrt(pitch * pitch - (R1 * Math.sin(half)) ** 2);
     const fits = (x, y) => {
       const sx = cx + x, sy = cy + y;
       if (sx - H < 4 || sx + H > vw - 4 || sy - H < 4 || sy + H > vh - 4) return false;
       if (mmr && sx + H > mmr.left - RING_GAP && sx - H < mmr.right + RING_GAP && sy - H < mmr.bottom + RING_GAP) return false;
-      return Math.max(Math.abs(x), Math.abs(y)) >= mainNeed;
+      return true;
     };
-    let pos = [];
-    for (let Rx = Ry * 1.2; Rx <= Ry * 2.6 && pos.length < n; Rx += 8) {
-      pos = [];
-      for (let a = ARC_FROM; a >= 20 && pos.length < n; a -= 0.5) {
-        const r = (a * Math.PI) / 180;
-        const x = Math.cos(r) * Rx, y = -Math.sin(r) * Ry;
-        if (fits(x, y) && pos.every(([px, py]) => Math.max(Math.abs(x - px), Math.abs(y - py)) >= need)) pos.push([x, y]);
-      }
+    const at = (R, a) => [Math.cos(a) * R, -Math.sin(a) * R, a];
+    const from = (ARC_FROM * Math.PI) / 180;
+    const inner = [], outer = [];
+    for (let a = from; a > 0; a -= step) { const p = at(R1, a); if (fits(p[0], p[1])) inner.push(p); }
+    for (let a = from - half; a > 0; a -= step) { const p = at(R2, a); if (fits(p[0], p[1])) outer.push(p); }
+    // 先填内圈，不够再按角度从左下往上取外圈
+    const pick = inner.slice(0, n);
+    for (const p of outer) {
+      if (pick.length >= n) break;
+      if (pick.every((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) >= pitch - 0.5)) pick.push(p);
     }
     // 极端小屏放不下：剩下的往最左那颗的左边排（不重叠，宁可远一点）
-    while (pos.length < n) {
-      const [lx, ly] = pos.reduce((m, p) => (p[0] < m[0] ? p : m), [0, 0]);
-      pos.push([lx - need, ly]);
+    while (pick.length < n) {
+      const [lx, ly] = pick.reduce((m, p) => (p[0] < m[0] ? p : m), [0, 0]);
+      pick.push([lx - pitch, ly, -1]);
     }
-    this.slots.forEach((sl, i) => this._place(sl.el, pos[i][0], pos[i][1]));
-    this._placeSide(Math.min(...pos.map((p) => p[0])) - H - 14 - JUMP / 2);
+    pick.sort((p, q) => q[2] - p[2]); // 按角度从左下往上
+    this.slots.forEach((sl, i) => this._place(sl.el, pick[i][0], pick[i][1]));
+    const jw = this.jumpBtn.getBoundingClientRect().width || JUMP;
+    this._placeSide(Math.min(...pick.map((p) => p[0])) - H - RING_GAP - 6 - jw / 2);
   }
 
   /** 跳跃 / 蹲下 / 下降：放在技能弧外侧（x = 它们的中心）。 */
@@ -288,12 +338,12 @@ export class TouchControls {
     this.slots = [];
 
     const main = this.mainBtn;
-    main.innerHTML = "";
+    main.face.innerHTML = "";
     main.classList.toggle("mount", ctx === "mount");
     main.classList.toggle("adv", ctx === "adventure");
-    if (ctx === "mount") main.appendChild(pixelCanvas(DRAGON_ICONS.breath, DRAGON_LEGEND, 5));
-    else if (ctx === "adventure") main.appendChild(pixelCanvas(PLAYER_ICONS.slash, JADE_LEGEND, 5));
-    else main.appendChild(pixelCanvas(UI_ICONS.place, UI_LEGEND, 5));
+    if (ctx === "mount") main.face.appendChild(pixelCanvas(DRAGON_ICONS.breath, DRAGON_LEGEND, 5));
+    else if (ctx === "adventure") main.face.appendChild(pixelCanvas(PLAYER_ICONS.slash, JADE_LEGEND, 5));
+    else main.face.appendChild(pixelCanvas(UI_ICONS.place, UI_LEGEND, 5));
     main.setAttribute("aria-label", ctx === "mount" ? "DRAGON BREATH" : ctx === "adventure" ? "JADE SLASH" : "PLACE");
 
     const defs = ctx === "mount"
@@ -310,7 +360,7 @@ export class TouchControls {
       secs.className = "secs";
       const prog = document.createElement("i");
       prog.className = "prog";
-      el.append(sweep, secs, prog);
+      el.face.append(sweep, secs, prog);
       this._tap(el, () => (ctx === "mount" ? this.mount.useSkill(d.id) : this.skills.use(d.id)));
       this.slots.push({ def: d, el, sweep, secs, prog, lastT: "", lastP: "" });
     });

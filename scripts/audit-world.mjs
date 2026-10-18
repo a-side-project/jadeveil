@@ -8,7 +8,7 @@
  * 规则：
  *   overlap      结构之间互相覆盖（一个结构把另一个结构放好的方块改掉了）
  *   vegetation   树干 / 树叶 / 竹子 / 花草长在结构里面或屋顶上
- *   cloud        云出现在主城地坪以上的城区里（实心的云会堵路）
+ *   cloud        宫墙以内任何高度出现云（低处的实心云会堵路，高处的白云压在殿顶上像积雪、挡住全城）
  *   coplanar     两个都会生成面的不同半透明方块贴在一起（重叠面闪烁）
  *   floating     结构脚下悬空（地坪那一格不是实心）
  *   enclosure    宫墙没有围住城门、牌坊、长街、坊市（城的边界和规划不一致）
@@ -53,7 +53,7 @@ for (let x = -hx - 4; x <= hx + 4; x++) {
       // ---- vegetation：不属于任何结构的植物（自然撒的）出现在结构占地的列里 ----
       if (claimed && PLANT.has(id) && !ownerAt(x, y, z)) add("vegetation", `${b.name}@${x},${y},${z}`);
       // ---- cloud ----
-      if (id === ID.cloud && inCity(x, z) && y < base + 20) add("cloud", `${x},${y},${z}`);
+      if (id === ID.cloud && inCity(x, z)) add("cloud", `${x},${y},${z}`);
     }
   }
 }

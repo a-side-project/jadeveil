@@ -276,6 +276,25 @@ export const UX_TEST_SOURCE = `
   });
 
   // 13. 还原默认：改乱以后一键回到出厂设置
+  // 贴图取样：每块贴图按 GPU 实际的取样方式（CanvasTexture 默认 flipY）落在图集的哪一格，必须正好是它自己。
+  // 旧版 uvRect 按画布坐标从上往下算 v，全世界每个方块都取到了镜像那一行的另一块贴图（草地是蓝瓦、云是翡翠地砖）。
+  await run("Every tile samples its own cell of the atlas (UV convention matches flipY)", () => {
+    const A = P.atlas, W = A.canvas.width, H = A.canvas.height, CELL = W / A.cols;
+    const flip = A.texture.flipY;
+    const wrong = [];
+    for (const [name, i] of A.index) {
+      const r = A.uvRect(name);
+      const u = (r.u0 + r.u1) / 2, v = (r.v0 + r.v1) / 2;
+      const py = (flip ? 1 - v : v) * H; // GPU 取样落在画布上的纵坐标
+      const cell = Math.floor(py / CELL) * A.cols + Math.floor((u * W) / CELL);
+      // 贴图上沿（v1）必须落在画布里该格的上边：方块不会上下颠倒
+      const topY = (flip ? 1 - r.v1 : r.v1) * H;
+      const upright = topY < py;
+      if (cell !== i || !upright) wrong.push(name);
+    }
+    return { tiles: A.index.size, wrong: wrong.slice(0, 8), wrongCount: wrong.length, pass: wrong.length === 0 };
+  });
+
   await run("RESTORE DEFAULTS resets graphics, controls and audio", () => {
     const keep = { mode: graphics.mode, ov: { ...graphics.overrides }, fov: graphics.fov, controls: { ...settingsUI.controls }, sfx: P.audio.settings.sfxVol };
     P.setQuality("low");

@@ -404,8 +404,12 @@ export class NPCManager {
 
     for (const a of this.agents) {
       const far = Math.hypot(a.pos.x - playerPos.x, a.pos.z - playerPos.z) > 90;
-      // 远处的居民降频更新（每 4 帧一次，步长补偿）
-      if (far && (a.id + (this._frame | 0)) % 4 !== 0) continue;
+      // 远处的居民降频更新（每 4 帧一次，步长补偿）—— 只省「思考」，不省安全网：
+      // 世界刚被改过（砌墙、爆炸、放水）时，被跳过的居民也要当帧检查落脚点，否则会在墙里待上几帧
+      if (far && (a.id + (this._frame | 0)) % 4 !== 0) {
+        if (a.navVer !== this.nav.version) this._ensureFooting(a);
+        continue;
+      }
       this._think(a, far ? dt * 4 : dt, playerPos, grid, key);
     }
     this._frame = (this._frame | 0) + 1;
@@ -571,13 +575,7 @@ export class NPCManager {
       if (want > 0) this._face(a, a.pos.x + dirX, a.pos.z + dirZ, dt, 6);
     }
 
-    // ---- 安全网：若脚下已不可走（玩家刚在这里挖坑 / 放了水），就近挪到可走格 ----
-    // 与验收标准（stats.inWall 用完整身体半径）一致：旧版这里只查 0.6 倍半径，离墙 0.25~0.42 的人既算「在墙里」又不会被挪开
-    if (!nav.bodyFits(a.pos.x, a.pos.z, BODY_R)) {
-      // 优先挪到主城连通区域里（不被「传送」进封闭区域）；墙把路切断时退而求其次，任何可走格都行
-      const p = nav.nearestWalkable(a.pos.x, a.pos.z, 10, nav.mainComp) || nav.nearestWalkable(a.pos.x, a.pos.z, 10);
-      if (p) { a.pos.x = p.x; a.pos.z = p.z; a.path = null; a.needPath = !!a.dest; }
-    }
+    this._ensureFooting(a);
 
     // ---- 高度：贴导航面，台阶平滑过渡 ----
     const h = nav.supportHeight(a.pos.x, a.pos.z, BODY_R);
@@ -599,6 +597,22 @@ export class NPCManager {
     }
     a.headYaw = damp(a.headYaw, hy, 6, dt);
     a.headPitch = damp(a.headPitch, hp, 6, dt);
+  }
+
+  /**
+   * 安全网：脚下已经站不下（玩家刚在这里挖坑、砌墙、放了水），就近挪到可走格并贴好高度。
+   * 与验收标准一致（stats.inWall 用完整身体半径）：旧版只查 0.6 倍半径，离墙 0.25~0.42 的人既算「在墙里」又不会被挪开。
+   */
+  _ensureFooting(a) {
+    const nav = this.nav;
+    a.navVer = nav.version;
+    if (nav.bodyFits(a.pos.x, a.pos.z, BODY_R)) return;
+    // 优先挪到主城连通区域里（不被「传送」进封闭区域）；墙把路切断时退而求其次，任何可走格都行
+    const p = nav.nearestWalkable(a.pos.x, a.pos.z, 10, nav.mainComp) || nav.nearestWalkable(a.pos.x, a.pos.z, 10);
+    if (!p) return;
+    a.pos.x = p.x; a.pos.z = p.z; a.path = null; a.needPath = !!a.dest;
+    const h = nav.supportHeight(a.pos.x, a.pos.z, BODY_R);
+    if (h >= 0) a.pos.y = h;
   }
 
   _findBuddy(a, grid, key) {

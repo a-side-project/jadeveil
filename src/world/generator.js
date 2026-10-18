@@ -720,8 +720,9 @@ export class WorldGenerator {
           if (d > 1) continue;
           const n = valueNoise2(x * 0.12, z * 0.12, this.seed + 300);
           if (n + (1 - d) * 0.6 < 0.62) continue;
-          // 不贴着任何结构（石阶上方的云会挡住登岛的人、塔身上会长出云团）
-          if (this.claimed(x, z, 2)) continue;
+          // 不贴着任何结构（石阶上方的云会挡住登岛的人、塔身上会长出云团）；
+          // 宫墙上空一律不放：白色的云块压在殿顶上像积雪，挡住全城（城里抬头看到的是天空本身的云）
+          if (this.insideWall(x, z, 8) || this.claimed(x, z, 2)) continue;
           w.setIfAir(x, cy, z, ID.cloud);
           if (n > 0.78) w.setIfAir(x, cy + 1, z, ID.cloud);
         }

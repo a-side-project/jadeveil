@@ -38,7 +38,7 @@
   <img alt="Single player" src="https://img.shields.io/badge/MODE-SINGLE%20PLAYER-c0392b?style=for-the-badge&labelColor=0b1014">
   <img alt="Desktop, tablet and phone" src="https://img.shields.io/badge/PLAYS%20ON-DESKTOP%20%C2%B7%20TABLET%20%C2%B7%20PHONE-e8b44a?style=for-the-badge&labelColor=0b1014">
   <img alt="Saves" src="https://img.shields.io/badge/SAVES-INDEXEDDB%20%2B%20FILE-9b3fe0?style=for-the-badge&labelColor=0b1014">
-  <img alt="Tests" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-107%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
+  <img alt="Tests" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-108%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
 </p>
 
 <p align="center">
@@ -159,7 +159,7 @@ The game shell is precached at install time, and every module, texture and sound
     </td>
     <td valign="top">
       <h3>A skill wheel built for thumbs</h3>
-      <p>On touch screens the skills sit on a wheel around the main attack button and change with the context: blade skills on foot, dragon skills when mounted, place in build mode. The wheel is laid out for the real screen, so buttons never overlap each other, the minimap or the screen edge, and each one shows its cooldown and learning progress.</p>
+      <p>On touch screens the skills sit in a tight honeycomb fan of pixel-stepped round buttons around the main attack button and change with the context: blade skills on foot, dragon skills when mounted, place in build mode. The wheel is laid out for the real screen, so buttons never overlap each other, the minimap or the screen edge, and each one shows its cooldown and learning progress.</p>
     </td>
   </tr>
 </table>
@@ -374,7 +374,7 @@ __pandaria.runWaterTests()               //  5  buoyancy, swimming, underwater v
 __pandaria.runQualityTests()             //  3  avatar & placement regressions
 __pandaria.runRpgTests()                 // 13  health, inventory, drops, building, torches, melee, mount, saves
 __pandaria.runNpcTests()                 //  4  140 residents × 90 s: 0 in walls, 0 in water, 0 off-grid
-await __pandaria.runUxTests()            // 14  light blocked by walls, incremental = full relight, shadow texel snap,
+await __pandaria.runUxTests()            // 15  every tile samples its own atlas cell, light blocked by walls, incremental = full relight, shadow texel snap,
                                          //     quality tiers, auto governor down and back up, crouch at ledges,
                                          //     toggle sprint, analog stick, settings never strand the pointer,
                                          //     restore defaults
@@ -385,7 +385,7 @@ await __pandaria.runSoakTests()          //  8  seeded random player × 4,200 fr
                                          //     pause freezes everything, HP in range, NPCs out of walls, no errors
 ```
 
-The world itself is checked in Node, without a browser: `npm test` (or `npm run audit`) generates the world and checks seven rules — structure overlaps, plants inside structures, solid clouds in the city, coplanar transparent faces, floating structures, the wall enclosing the city, and every resident station being reachable.
+The world itself is checked in Node, without a browser: `npm test` (or `npm run audit`) generates the world and checks seven rules — structure overlaps, plants inside structures, clouds anywhere above the city, coplanar transparent faces, floating structures, the wall enclosing the city, and every resident station being reachable.
 
 Add `?quality=low|medium|high|ultra`, `?touch=1` or `?nosw` to the URL to force a graphics setting, force touch mode or bypass the service worker while testing.
 

@@ -66,17 +66,21 @@ export class TextureAtlas {
     this.texture = null;
   }
 
-  /** 返回 tile 在 [0,1] UV 空间中的最小/最大坐标。 */
+  /**
+   * 返回 tile 在 [0,1] UV 空间中的最小/最大坐标，按 GPU 的约定：v 从下往上（v1 是贴图的上沿）。
+   * 图集是 CanvasTexture，默认 flipY —— 画布第一行在 v = 1。旧版按画布坐标从上往下算 v，
+   * 每个方块都取到了镜像那一行的另一块贴图（草地显示成蓝瓦、云显示成翡翠地砖、汉白玉显示成苔石）。
+   */
   uvRect(name) {
     const i = this.index.get(name);
     if (i === undefined) throw new Error(`Unknown tile: ${name}`);
     const cx = i % this.cols;
     const cy = (i / this.cols) | 0;
     const x0 = (cx * CELL + PAD) / this.width;
-    const y0 = (cy * CELL + PAD) / this.height;
+    const top = (cy * CELL + PAD) / this.height; // 画布坐标：贴图上沿离画布顶端的比例
     const w = TILE / this.width;
     const h = TILE / this.height;
-    return { u0: x0, v0: y0, u1: x0 + w, v1: y0 + h };
+    return { u0: x0, v0: 1 - top - h, u1: x0 + w, v1: 1 - top };
   }
 
   build() {

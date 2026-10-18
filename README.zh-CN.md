@@ -38,7 +38,7 @@
   <img alt="单机" src="https://img.shields.io/badge/MODE-SINGLE%20PLAYER-c0392b?style=for-the-badge&labelColor=0b1014">
   <img alt="存档" src="https://img.shields.io/badge/SAVES-INDEXEDDB%20%2B%20FILE-9b3fe0?style=for-the-badge&labelColor=0b1014">
   <img alt="桌面、平板、手机" src="https://img.shields.io/badge/PLAYS%20ON-DESKTOP%20%C2%B7%20TABLET%20%C2%B7%20PHONE-e8b44a?style=for-the-badge&labelColor=0b1014">
-  <img alt="测试" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-107%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
+  <img alt="测试" src="https://img.shields.io/badge/IN--BROWSER%20TESTS-108%20PASSING-6fc0ae?style=for-the-badge&labelColor=0b1014">
 </p>
 
 <p align="center">
@@ -159,7 +159,7 @@ JADEVEIL 是一整个世界的名字，而不是一张地图。长远目标是�
     </td>
     <td valign="top">
       <h3>为拇指设计的技能盘</h3>
-      <p>触屏上，技能围绕主攻击键排成一圈，并随情境切换：步行时是剑技，骑龙时是龙技，建造模式下是放置。技能盘按真实屏幕尺寸排布，按钮不会互相重叠，也不会压到小地图或超出屏幕；每个按钮都显示冷却和学习进度。</p>
+      <p>触屏上，技能是一格一格的像素圆按钮，紧贴主攻击键排成蜂窝扇面，并随情境切换：步行时是剑技，骑龙时是龙技，建造模式下是放置。技能盘按真实屏幕尺寸排布，按钮不会互相重叠，也不会压到小地图或超出屏幕；每个按钮都显示冷却和学习进度。</p>
     </td>
   </tr>
 </table>
@@ -374,7 +374,7 @@ __pandaria.runWaterTests()               //  5  浮力、游泳、水下视角
 __pandaria.runQualityTests()             //  3  化身与放置回归
 __pandaria.runRpgTests()                 // 13  生命、背包、掉落、建造、火把、近战、坐骑、存档
 __pandaria.runNpcTests()                 //  4  140 人 × 90 秒：0 穿墙、0 入水、0 离网
-await __pandaria.runUxTests()            // 14  墙挡光、增量重算 = 全量重算、阴影纹素对齐、画质档位、
+await __pandaria.runUxTests()            // 15  每块贴图取样都落在图集里自己那一格、墙挡光、增量重算 = 全量重算、阴影纹素对齐、画质档位、
                                          //     自动降档与回升、蹲在边缘不掉落、切换式疾跑、模拟摇杆、
                                          //     设置窗口不会让指针失控、还原默认
 await __pandaria.runWorldTests()         // 14  水流扩散、溃坝、断源干涸、沙子下落、爆炸弹坑、
@@ -384,7 +384,7 @@ await __pandaria.runSoakTests()          //  8  固定种子的随机玩家 × 4
                                          //     生命值在范围内、居民不穿墙、没有报错
 ```
 
-世界本身在 Node 里检查，不需要浏览器：`npm test`（或 `npm run audit`）生成世界并检查七条规则——建筑互相覆盖、植物长进建筑、城里有实心云、半透明方块共面、建筑悬空、宫墙是否围住全城、每个居民站位都走得到。
+世界本身在 Node 里检查，不需要浏览器：`npm test`（或 `npm run audit`）生成世界并检查七条规则——建筑互相覆盖、植物长进建筑、宫墙上空有云、半透明方块共面、建筑悬空、宫墙是否围住全城、每个居民站位都走得到。
 
 测试时可以在网址后加 `?quality=low|medium|high|ultra`、`?touch=1` 或 `?nosw`，分别强制画质档位、强制触屏模式、绕过 Service Worker。
 
